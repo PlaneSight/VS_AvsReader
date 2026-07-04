@@ -121,12 +121,12 @@ FILTERS: list[dict] = [
     # ── Convolution ─────────────────────────────────────────────────
     {"name": "GeneralConvolution", "template": 'GeneralConvolution(0,"0 -1 0 -1 6 -1 0 -1 0")', "allowed": None},
     # ── Field ──────────────────────────────────────────────────────
-    {"name": "SeparateFields", "template": "AssumeFrameBased().SeparateFields()", "allowed": None},
+    {"name": "SeparateFields", "template": "AssumeFrameBased().SeparateFields()", "allowed": None},  # needs even height
     {"name": "Weave",          "template": "AssumeFrameBased().SeparateFields().Weave()", "allowed": None},
     # ── Overlay / text ──────────────────────────────────────────────
     {"name": "Subtitle",          "template": 'Subtitle("test")',          "allowed": None},
     {"name": "ShowFrameNumber",   "template": "ShowFrameNumber()",         "allowed": None},
-    {"name": "Histogram(classic)","template": 'Histogram("classic")',      "allowed": None},
+    {"name": "Histogram(classic)","template": 'Histogram("classic")',      "allowed": ["YV12", "YV16", "YV24", "YUY2"]},
     # ── Audio ──────────────────────────────────────────────────────
     {"name": "KillAudio",  "template": "KillAudio()",  "allowed": None},
 ]
@@ -202,6 +202,17 @@ def _compatible_filters(current_fmt: str) -> list[dict]:
     ]
 
 
+def _size_ok(filter_name: str, w: int, h: int) -> bool:
+    """Return False if *filter_name* cannot validly apply to dimensions (w, h)."""
+    match filter_name:
+        case "SeparateFields" | "Weave":
+            return h % 2 == 0
+        case "Crop(4)":
+            return w > 8 and h > 8
+        case _:
+            return True
+
+
 # ---------------------------------------------------------------------------
 # Generator – produces one randomised AviSynth script + metadata
 # ---------------------------------------------------------------------------
@@ -224,6 +235,7 @@ def generate_script() -> tuple[str, dict]:
 
     lines = [src_line]
     current_fmt = start_format
+    current_w, current_h = w, h
     filters_applied: list[str] = []
 
     # 2. Append 1–5 random compatible filters
@@ -233,6 +245,9 @@ def generate_script() -> tuple[str, dict]:
         if not candidates:
             break
         chosen = random.choice(candidates)
+        # Check size constraints before applying
+        if not _size_ok(chosen["name"], current_w, current_h):
+            continue
         params = _random_params(chosen["name"])
         filter_line = chosen["template"].format(**params)
         lines.append(filter_line)
@@ -241,6 +256,19 @@ def generate_script() -> tuple[str, dict]:
         # Track format change
         if chosen["name"] in FORMAT_CHANGES:
             current_fmt = FORMAT_CHANGES[chosen["name"]]
+
+        # Track dimension changes
+        name = chosen["name"]
+        if name in ("BilinearResize", "BicubicResize", "PointResize", "LanczosResize"):
+            current_w, current_h = params["rw"], params["rh"]
+        elif name in ("TurnLeft", "TurnRight"):
+            current_w, current_h = current_h, current_w
+        elif name == "Crop(4)":
+            current_w, current_h = current_w - 8, current_h - 8
+        elif name == "SeparateFields":
+            current_h //= 2
+        elif name == "Weave":
+            current_h *= 2
 
     script = "\n".join(lines)
 

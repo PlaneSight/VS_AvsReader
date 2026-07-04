@@ -398,6 +398,27 @@ class TestRobustness:
         p = run_isolated(script)
         assert p.returncode == 0, p.stderr
 
+    # -- Format rejection: YUV-only filters reject RGB input ----------
+
+    RGB_TWEAK = f'BlankClip(width=64, height=48, {RGB24}, length=1)\nTweak(sat=1.0)'
+    RGB_COLORYUV = f'BlankClip(width=64, height=48, {RGB24}, length=1)\nColorYUV(gain_y=10)'
+    RGB_LIMITER = f'BlankClip(width=64, height=48, {RGB24}, length=1)\nLimiter()'
+    RGB_HISTOGRAM = f'BlankClip(width=64, height=48, {RGB24}, length=1)\nHistogram("classic")'
+
+    @pytest.mark.parametrize("script,expected", [
+        (RGB_TWEAK, "Tweak: YUV data only"),
+        (RGB_COLORYUV, "ColorYUV: Only work with YUV"),
+        (RGB_LIMITER, "Limiter: Source must be YUV"),
+        (RGB_HISTOGRAM, "Histogram: YUV"),
+    ])
+    def test_yuv_filters_reject_rgb(self, core, script, expected):
+        with pytest.raises(vs.Error, match=expected):
+            core.avsr.Eval(lines=script)
+
+    def test_coloryuv_rejects_rgb32(self, core):
+        with pytest.raises(vs.Error, match="ColorYUV: Only work with YUV"):
+            core.avsr.Eval(lines=f'BlankClip(width=64, height=48, {RGB32}, length=1)\nColorYUV(gain_y=10)')
+
 
 # -- Overlays & text ----------------------------------------------------
 
@@ -564,6 +585,24 @@ class TestColourFilters:
 
     def test_coloryuv_cont(self, core):
         c = clip(core, self.src_yv12 + '\nColorYUV(cont_u=10, cont_v=-10)')
+        assert c.format.id == vs.YUV420P8
+
+    # -- Workarounds: ConvertToYV12 before YUV filters from RGB -------
+
+    def test_tweak_after_convert_from_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nConvertToYV12()\nTweak(sat=1.0)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_coloryuv_after_convert_from_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nConvertToYV12()\nColorYUV(gain_y=10)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_limiter_after_convert_from_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nConvertToYV12()\nLimiter(16, 235, 16, 240)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_histogram_after_convert_from_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nConvertToYV12()\nHistogram("classic")')
         assert c.format.id == vs.YUV420P8
 
 
