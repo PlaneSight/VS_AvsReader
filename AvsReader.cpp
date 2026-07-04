@@ -4,6 +4,7 @@ AvsReader.cpp
 This file is a part of VS_AvsReader
 
 Copyright (C) 2016  Oka Motofumi
+Copyright (C) 2026  PlaneSight
 
 Author: Oka Motofumi (chikuzen.mo at gmail dot com)
 
@@ -22,7 +23,6 @@ License along with Libav; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-
 #include <cstdint>
 #include <algorithm>
 #include <vector>
@@ -33,72 +33,83 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 const AVS_Linkage* AVS_linkage = nullptr;
 
 
+/* ------------------------------------------------------------------ */
+/*  UTF-8 to ANSI conversion (Windows only)                           */
+/* ------------------------------------------------------------------ */
+#ifdef _WIN32
 static void convert_utf8_to_ansi(const char* utf8, std::vector<char>& ansi)
 {
     int length = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-    std::vector<wchar_t> wchar;
-    wchar.reserve(length);
+    std::vector<wchar_t> wchar(static_cast<size_t>(length));
     MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wchar.data(), length);
 
-    length = WideCharToMultiByte(CP_THREAD_ACP, 0, wchar.data(), -1, nullptr, 0, 0, 0);
-    ansi.reserve(length);
-    WideCharToMultiByte(CP_THREAD_ACP, 0, wchar.data(), -1, ansi.data(), length, 0, 0);
+    length = WideCharToMultiByte(CP_THREAD_ACP, 0, wchar.data(), -1,
+                                 nullptr, 0, 0, 0);
+    ansi.resize(static_cast<size_t>(length));
+    WideCharToMultiByte(CP_THREAD_ACP, 0, wchar.data(), -1,
+                        ansi.data(), length, 0, 0);
 }
+#endif
 
 
-static const VSFormat*
-get_vs_format(int pixel_type, int bitdepth, VSCore *core, const VSAPI *api)
+/* ------------------------------------------------------------------ */
+/*  AviSynth pixel-type → VSVideoFormat lookup                        */
+/* ------------------------------------------------------------------ */
+static int
+get_vs_video_format(VSVideoFormat* fmt, int pixel_type, int bitdepth,
+                     VSCore* core, const VSAPI* api)
 {
-    auto pix_or_depth = [](uint64_t pix, uint64_t depth) {
-        return (pix << 8) | depth;
+    struct AvsFormatEntry {
+        int colorFamily;
+        int subSamplingW;
+        int subSamplingH;
     };
 
-    uint64_t val = pix_or_depth(pixel_type, bitdepth);
+    auto pix = static_cast<uint64_t>(pixel_type);
 
-    const struct {
-        uint64_t avs_pix_type;
-        int id;
+    /* Maps from AviSynth pixel type to (colorFamily, subW, subH).
+       Separate tables so we can zero bitsPerSample for the sentinel. */
+    static const struct {
+        uint64_t avsType;
+        int colorFamily;
+        int subW;
+        int subH;
     } table[] = {
-        { pix_or_depth(VideoInfo::CS_BGR32, 8), pfRGB24     },
-        { pix_or_depth(VideoInfo::CS_BGR24, 8), pfRGB24     },
-        { pix_or_depth(VideoInfo::CS_YV24,  8), pfYUV444P8  },
-        { pix_or_depth(VideoInfo::CS_YV24,  9), pfYUV444P9  },
-        { pix_or_depth(VideoInfo::CS_YV24, 10), pfYUV444P10 },
-        { pix_or_depth(VideoInfo::CS_YV24, 16), pfYUV444P16 },
-        { pix_or_depth(VideoInfo::CS_YV16,  8), pfYUV422P8  },
-        { pix_or_depth(VideoInfo::CS_YV16,  9), pfYUV422P9  },
-        { pix_or_depth(VideoInfo::CS_YV16, 10), pfYUV422P10 },
-        { pix_or_depth(VideoInfo::CS_YV16, 16), pfYUV422P16 },
-        { pix_or_depth(VideoInfo::CS_YV411, 8), pfYUV411P8  },
-        { pix_or_depth(VideoInfo::CS_I420,  8), pfYUV420P8  },
-        { pix_or_depth(VideoInfo::CS_I420,  9), pfYUV420P9  },
-        { pix_or_depth(VideoInfo::CS_I420, 10), pfYUV420P10 },
-        { pix_or_depth(VideoInfo::CS_I420, 16), pfYUV420P16 },
-        { pix_or_depth(VideoInfo::CS_YV12,  8), pfYUV420P8  },
-        { pix_or_depth(VideoInfo::CS_YV12,  9), pfYUV420P9  },
-        { pix_or_depth(VideoInfo::CS_YV12, 10), pfYUV420P10 },
-        { pix_or_depth(VideoInfo::CS_YV12, 16), pfYUV420P16 },
-        { pix_or_depth(VideoInfo::CS_Y8,    8), pfGray8     },
-        { pix_or_depth(VideoInfo::CS_Y8,   16), pfGray16    },
-        { val, 0 }
+        { VideoInfo::CS_BGR32, cfRGB, 0, 0 },
+        { VideoInfo::CS_BGR24, cfRGB, 0, 0 },
+        { VideoInfo::CS_YV24,  cfYUV, 0, 0 },
+        { VideoInfo::CS_YV16,  cfYUV, 1, 0 },
+        { VideoInfo::CS_YV411, cfYUV, 2, 0 },
+        { VideoInfo::CS_I420,  cfYUV, 1, 1 },
+        { VideoInfo::CS_YV12,  cfYUV, 1, 1 },
+        { VideoInfo::CS_Y8,    cfGray, 0, 0 },
+        { 0, 0, 0, 0 }  /* sentinel */
     };
 
-    int i;
-    for (i = 0; table[i].avs_pix_type != val; i++);
-    validate(table[i].id == 0, "couldn't found valid format type");
+    for (int i = 0; table[i].avsType != 0; ++i) {
+        if (table[i].avsType == pix) {
+            return api->queryVideoFormat(fmt, table[i].colorFamily,
+                                         stInteger, bitdepth,
+                                         table[i].subW, table[i].subH,
+                                         core);
+        }
+    }
 
-    return api->getFormatPreset(table[i].id, core);
+    return 0; /* not found */
 }
 
 
+/* ------------------------------------------------------------------ */
+/*  RGB frame writer  (BGR[A] interleaved → planar RGB[A])           */
+/* ------------------------------------------------------------------ */
 template <bool ALPHA, int CHANNELS>
-static void __stdcall
-write_rgb(VSFrameRef** dsts, PVideoFrame& src, int, const VSAPI* api) noexcept
+static void VS_CC
+write_rgb(VSFrame** dsts, PVideoFrame& src, int, const VSAPI* api) noexcept
 {
-    VSFrameRef* dst = dsts[0];
+    VSFrame* dst = dsts[0];
 
-    const int spitch = src->GetPitch();
-    const int dstride = api->getStride(dst, 0);
+    const ptrdiff_t spitch = src->GetPitch();
+    const ptrdiff_t dstride = api->getStride(dst, 0);
     const int width = src->GetRowSize() / CHANNELS;
     const int height = src->GetHeight();
 
@@ -128,19 +139,84 @@ write_rgb(VSFrameRef** dsts, PVideoFrame& src, int, const VSAPI* api) noexcept
 }
 
 
-static void __stdcall
-write_yuv(VSFrameRef** dsts, PVideoFrame& src, int num_planes,
+/* ------------------------------------------------------------------ */
+/*  YUV frame writer  (planar → planar)                               */
+/* ------------------------------------------------------------------ */
+static void VS_CC
+write_yuv(VSFrame** dsts, PVideoFrame& src, int num_planes,
           const VSAPI* api) noexcept
 {
     static const int planes[] = { PLANAR_Y, PLANAR_U, PLANAR_V };
 
-    VSFrameRef* dst = dsts[0];
+    VSFrame* dst = dsts[0];
 
     for (int i = 0; i < num_planes; ++i) {
         int plane = planes[i];
         bitblt(api->getWritePtr(dst, i), api->getStride(dst, i),
                src->GetReadPtr(plane), src->GetPitch(plane),
-               src->GetRowSize(plane), src->GetHeight(plane));
+               static_cast<size_t>(src->GetRowSize(plane)),
+               static_cast<size_t>(src->GetHeight(plane)));
+    }
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Constructor / Destructor                                          */
+/* ------------------------------------------------------------------ */
+#ifdef _WIN32
+AvsReader::AvsReader(HMODULE d, ise_t* e, PClip c, int n, int bit_depth,
+                     VSCore* core, const VSAPI* api) :
+    dll(d), env(e), clip(c), numOutputs(n), bitDepth(bit_depth), vi{}
+{
+    viAVS = clip->GetVideoInfo();
+
+    /* Fill VSVideoInfo */
+    VSVideoFormat fmt{};
+    get_vs_video_format(&fmt, viAVS.pixel_type, bit_depth, core, api);
+    vi.format = fmt;
+    vi.fpsNum = viAVS.fps_numerator;
+    vi.fpsDen = viAVS.fps_denominator;
+    vi.width = bit_depth > 8 ? viAVS.width / 2 : viAVS.width;
+    vi.height = viAVS.height;
+    vi.numFrames = viAVS.num_frames;
+
+    /* Pick the frame-writer function */
+    if (viAVS.IsRGB32()) {
+        write_frame = write_rgb<true, 4>;
+    } else if (viAVS.IsRGB24()) {
+        write_frame = write_rgb<false, 3>;
+    } else {
+        write_frame = write_yuv;
+    }
+}
+#endif
+
+AvsReader::AvsReader(ise_t* e, PClip c, int n, int bit_depth,
+                     VSCore* core, const VSAPI* api) :
+    env(e), clip(c), numOutputs(n), bitDepth(bit_depth), vi{}
+#ifdef _WIN32
+    , dll(nullptr)
+#endif
+{
+    viAVS = clip->GetVideoInfo();
+
+    /* Fill VSVideoInfo */
+    VSVideoFormat fmt{};
+    get_vs_video_format(&fmt, viAVS.pixel_type, bit_depth, core, api);
+    vi.format = fmt;
+    vi.fpsNum = viAVS.fps_numerator;
+    vi.fpsDen = viAVS.fps_denominator;
+    vi.width = bit_depth > 8 ? viAVS.width / 2 : viAVS.width;
+    vi.height = viAVS.height;
+    vi.numFrames = viAVS.num_frames;
+
+    /* Pick the frame-writer function */
+    if (viAVS.IsRGB32()) {
+        write_frame = write_rgb<true, 4>;
+    } else if (viAVS.IsRGB24()) {
+        write_frame = write_rgb<false, 3>;
+    } else {
+        write_frame = write_yuv;
     }
 }
 
@@ -152,78 +228,96 @@ AvsReader::~AvsReader()
         env->DeleteScriptEnvironment();
         env = nullptr;
     }
+#ifdef _WIN32
     if (dll) {
         FreeLibrary(dll);
         dll = nullptr;
     }
+#endif
 }
 
 
-AvsReader::AvsReader(HMODULE d, ise_t* e, PClip c, int n, int bit_depth,
-                     VSCore* core, const VSAPI* api) :
-    dll(d), env(e), clip(c), numOutputs(n)
+/* ------------------------------------------------------------------ */
+/*  getFrame                                                          */
+/* ------------------------------------------------------------------ */
+const VSFrame* VS_CC AvsReader::getFrame(int n, VSFrameContext* ctx,
+                                          VSCore* core, const VSAPI* api)
 {
-    viAVS = clip->GetVideoInfo();
-
-    vi[0].format = get_vs_format(viAVS.pixel_type, bit_depth, core, api);
-    vi[0].fpsNum = viAVS.fps_numerator;
-    vi[0].fpsDen = viAVS.fps_denominator;
-    vi[0].width = bit_depth > 8 ? viAVS.width / 2 : viAVS.width;
-    vi[0].height = viAVS.height;
-    vi[0].numFrames = viAVS.num_frames;
-
-    if (numOutputs == 2) {
-        vi[1] = vi[0];
-        vi[1].format = api->getFormatPreset(pfGray8, core);
-        write_frame = write_rgb<true, 4>;
-    } else if (viAVS.IsRGB32()) {
-        write_frame = write_rgb<false, 4>;
-    } else if (viAVS.IsRGB24()) {
-        write_frame = write_rgb<false, 3>;
-    } else {
-        write_frame = write_yuv;
-    }
-}
-
-
-const VSFrameRef* __stdcall AvsReader::
-getFrame(int n, VSCore* core, const VSAPI* api, VSFrameContext* ctx)
-{
+    (void)ctx;
     n = std::min(std::max(n, 0), viAVS.num_frames - 1);
 
-    VSFrameRef* dsts[2] = {
-        api->newVideoFrame(vi[0].format, vi[0].width, vi[0].height, nullptr,
-                           core),
-        nullptr
-    };
+    VSFrame* dst = api->newVideoFrame(&vi.format, vi.width, vi.height,
+                                       nullptr, core);
 
-    VSMap *props = api->getFramePropsRW(dsts[0]);
-    api->propSetInt(props, "_DurationNum", viAVS.fps_denominator, paReplace);
-    api->propSetInt(props, "_DurationDen", viAVS.fps_numerator, paReplace);
+    /* Set frame properties */
+    VSMap* props = api->getFramePropertiesRW(dst);
+    api->mapSetInt(props, "_DurationNum", viAVS.fps_denominator, maReplace);
+    api->mapSetInt(props, "_DurationDen", viAVS.fps_numerator, maReplace);
 
+    /* Get frame from AviSynth */
     PVideoFrame src = clip->GetFrame(n, env);
 
-    if (numOutputs == 1) {
-        write_frame(dsts, src, vi[0].format->numPlanes, api);
-        return dsts[0];
-    }
+    /* Write planes */
+    VSFrame* dsts[2] = { dst, nullptr };
+    write_frame(dsts, src, vi.format.numPlanes, api);
 
-    dsts[1] = api->newVideoFrame(vi[1].format, vi[1].width, vi[1].height,
-                                nullptr, core);
-    props = api->getFramePropsRW(dsts[1]);
-    api->propSetInt(props, "_DurationNum", viAVS.fps_denominator, paReplace);
-    api->propSetInt(props, "_DurationDen", viAVS.fps_numerator, paReplace);
-
-    write_frame(dsts, src, 1, api);
-
-    return api->cloneFrameRef(dsts[api->getOutputIndex(ctx)]);
+    return dst;
 }
 
 
+/* ------------------------------------------------------------------ */
+/*  getAvisynthFrame — raw frame access for per-output writers        */
+/* ------------------------------------------------------------------ */
+PVideoFrame AvsReader::getAvisynthFrame(int n)
+{
+    n = std::min(std::max(n, 0), viAVS.num_frames - 1);
+    return clip->GetFrame(n, env);
+}
 
-AvsReader* AvsReader::
-create(const char* input, int bit_depth, bool alpha, const char* mode,
-       VSCore* core, const VSAPI* api)
+
+/* ------------------------------------------------------------------ */
+/*  Factory method — portable (no LoadLibrary)                        */
+/* ------------------------------------------------------------------ */
+AvsReader* AvsReader::create(const char* input, int bit_depth,
+                              bool alpha, const char* mode,
+                              VSCore* core, const VSAPI* api)
+{
+    (void)core;
+    (void)api;
+
+    /* On non-Windows, we rely on the AviSynth shared library being
+       pre-loaded / available via the system linker.  If this path is
+       reached without an AviSynth runtime, it will fail at the
+       IScriptEnvironment constructor (compile-time dependency). */
+
+    ise_t* env = nullptr;
+
+    try {
+        /* Create script environment — the exact method depends on how
+           AviSynth+ is linked.  If linked dynamically, the caller must
+           have already loaded the library and resolved the entry point. */
+        /* For now this is a stub — the Win32 path does the real work. */
+        (void)input;
+        (void)bit_depth;
+        (void)alpha;
+        (void)mode;
+        validate(true, "portable create() not yet implemented; use createWin32 on Windows");
+    } catch (std::string&) {
+        if (env) env->DeleteScriptEnvironment();
+        throw;
+    }
+
+    return nullptr;
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Factory method — Win32 (LoadLibrary + GetProcAddress)             */
+/* ------------------------------------------------------------------ */
+#ifdef _WIN32
+AvsReader* AvsReader::createWin32(const char* input, int bit_depth,
+                                   bool alpha, const char* mode,
+                                   VSCore* core, const VSAPI* api)
 {
     typedef ise_t* (__stdcall *cse_t)(int);
 
@@ -240,6 +334,7 @@ create(const char* input, int bit_depth, bool alpha, const char* mode,
 
         env = create_env(AVISYNTH_INTERFACE_VERSION);
         validate(!env, "failed to create avisynth script environment.");
+
         AVS_linkage = env->GetAVSLinkage();
 
         std::vector<char> ansi;
@@ -268,12 +363,8 @@ create(const char* input, int bit_depth, bool alpha, const char* mode,
 
     } catch (std::string e) {
         AVS_linkage = nullptr;
-        if (env) {
-            env->DeleteScriptEnvironment();
-        }
-        if (dll) {
-            FreeLibrary(dll);
-        }
+        if (env) env->DeleteScriptEnvironment();
+        if (dll) FreeLibrary(dll);
         throw e;
     } catch (AvisynthError e) {
         auto msg = std::string(e.msg);
@@ -284,4 +375,28 @@ create(const char* input, int bit_depth, bool alpha, const char* mode,
     }
 
     return nullptr;
+}
+#endif
+
+
+/* ------------------------------------------------------------------ */
+/*  Static write wrappers (delegates to template-based internals)     */
+/* ------------------------------------------------------------------ */
+
+void VS_CC AvsReader::writeRGB24(VSFrame** dsts, PVideoFrame& src,
+                                  int num_planes, const VSAPI* api)
+{
+    write_rgb<false, 3>(dsts, src, num_planes, api);
+}
+
+void VS_CC AvsReader::writeRGB32(VSFrame** dsts, PVideoFrame& src,
+                                  int num_planes, const VSAPI* api)
+{
+    write_rgb<false, 4>(dsts, src, num_planes, api);
+}
+
+void VS_CC AvsReader::writeYUV(VSFrame** dsts, PVideoFrame& src,
+                                int num_planes, const VSAPI* api)
+{
+    write_yuv(dsts, src, num_planes, api);
 }

@@ -4,6 +4,7 @@ myvshelper.h
 This file is a part of VS_AvsReader
 
 Copyright (C) 2016  Oka Motofumi
+Copyright (C) 2026  PlaneSight
 
 Author: Oka Motofumi (chikuzen.mo at gmail dot com)
 
@@ -22,13 +23,13 @@ License along with Libav; if not, write to the Free Software
 Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 */
 
-
 #ifndef MY_VAPOURSYNTH_HELPER_H
 #define MY_VAPOURSYNTH_HELPER_H
 
 #include <cstdint>
 #include <cstdlib>
-#include <VapourSynth.h>
+#include <cstring>
+#include <VapourSynth4.h>
 
 
 template <typename T>
@@ -39,7 +40,7 @@ static inline int
 get_prop<int>(const VSAPI* api, const VSMap* in, const char* name, int idx,
               int* e)
 {
-    return static_cast<int>(api->propGetInt(in, name, idx, e));
+    return api->mapGetIntSaturated(in, name, idx, e);
 }
 
 template <>
@@ -47,7 +48,7 @@ static inline int64_t
 get_prop<int64_t>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                   int* e)
 {
-    return api->propGetInt(in, name, idx, e);
+    return api->mapGetInt(in, name, idx, e);
 }
 
 template <>
@@ -55,7 +56,10 @@ static inline bool
 get_prop<bool>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                int* e)
 {
-    return api->propGetInt(in, name, idx, e) != 0;
+    int err = 0;
+    int64_t val = api->mapGetInt(in, name, idx, &err);
+    if (e) *e = err;
+    return val != 0;
 }
 
 template <>
@@ -63,7 +67,7 @@ static inline float
 get_prop<float>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                 int* e)
 {
-    return static_cast<float>(api->propGetFloat(in, name, idx, e));
+    return api->mapGetFloatSaturated(in, name, idx, e);
 }
 
 template <>
@@ -71,16 +75,17 @@ static inline double
 get_prop<double>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                  int* e)
 {
-    return api->propGetFloat(in, name, idx, e);
+    return api->mapGetFloat(in, name, idx, e);
 }
 
 template <>
 static inline const char*
-get_prop<const char*>(const VSAPI* api, const VSMap* in, const char* name, int idx,
-                      int* e)
+get_prop<const char*>(const VSAPI* api, const VSMap* in, const char* name,
+                      int idx, int* e)
 {
-    return api->propGetData(in, name, idx, e);
+    return api->mapGetData(in, name, idx, e);
 }
+
 
 template <typename T>
 static inline T get_arg(const char* name, T default_value, int index,
@@ -94,16 +99,17 @@ static inline T get_arg(const char* name, T default_value, int index,
     return ret;
 }
 
+
 template <typename T>
 static inline void
-bitblt(T* dstp, const int dstride, const T* srcp, const int sstride,
+bitblt(T* dstp, const ptrdiff_t dstride, const T* srcp, const ptrdiff_t sstride,
        const size_t width, const size_t height)
 {
     if (height == 0) {
         return;
     }
     const size_t w = width * sizeof(T);
-    if (sstride == dstride && sstride == static_cast<int>(width)) {
+    if (sstride == dstride && sstride == static_cast<ptrdiff_t>(width)) {
         memcpy(dstp, srcp, w * height);
         return;
     }

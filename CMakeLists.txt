@@ -1,0 +1,116 @@
+cmake_minimum_required(VERSION 3.16)
+project(vsavsreader
+    VERSION 2.0.0
+    DESCRIPTION "AviSynth Script Reader plugin for VapourSynth"
+    LANGUAGES CXX
+)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# ── Dependencies ────────────────────────────────────────────────────
+# VapourSynth4 headers — find via pkg-config on Linux/macOS, or
+# VapourSynth_DIR on Windows.
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(VAPOURSYNTH vapoursynth-script)
+endif()
+
+if(NOT VAPOURSYNTH_FOUND)
+    # Fallback: look for the headers in common locations
+    find_path(VAPOURSYNTH_INCLUDE_DIR
+        NAMES VapourSynth4.h
+        PATHS
+            /usr/include
+            /usr/local/include
+            /opt/homebrew/include
+            /usr/include/vapoursynth
+            /usr/local/include/vapoursynth
+            "C:/Program Files/VapourSynth/include"
+            "C:/Program Files (x86)/VapourSynth/include"
+        NO_DEFAULT_PATH
+    )
+    find_path(VAPOURSYNTH_LIBRARY_DIR
+        NAMES vapoursynth.lib libvapoursynth.dylib libvapoursynth.so
+        PATHS
+            /usr/lib
+            /usr/local/lib
+            /opt/homebrew/lib
+            "C:/Program Files/VapourSynth/lib"
+            "C:/Program Files (x86)/VapourSynth/lib"
+        NO_DEFAULT_PATH
+    )
+    if(VAPOURSYNTH_INCLUDE_DIR)
+        set(VAPOURSYNTH_INCLUDE_DIRS "${VAPOURSYNTH_INCLUDE_DIR}")
+        set(VAPOURSYNTH_FOUND TRUE)
+    endif()
+endif()
+
+# AviSynth+ headers
+find_path(AVISYNTH_INCLUDE_DIR
+    NAMES avisynth.h
+    PATHS
+        /usr/include
+        /usr/local/include
+        /opt/homebrew/include
+        /usr/include/avisynth
+        "C:/Program Files/AviSynth+/include"
+        "C:/Program Files (x86)/AviSynth+/include"
+    NO_DEFAULT_PATH
+)
+
+# ── Sources ─────────────────────────────────────────────────────────
+set(SOURCES
+    AvsReader.cpp
+    plugin.cpp
+)
+
+# ── Shared library ──────────────────────────────────────────────────
+add_library(vsavsreader SHARED ${SOURCES})
+
+target_include_directories(vsavsreader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${VAPOURSYNTH_INCLUDE_DIRS}
+    ${AVISYNTH_INCLUDE_DIR}
+)
+
+if(WIN32)
+    # Windows: link avisynth library at runtime via LoadLibrary,
+    # no static link needed.  Link VapourSynth import lib.
+    if(VAPOURSYNTH_LIBRARY_DIR)
+        find_library(VAPOURSYNTH_LIB vapoursynth HINTS ${VAPOURSYNTH_LIBRARY_DIR})
+        if(VAPOURSYNTH_LIB)
+            target_link_libraries(vsavsreader PRIVATE ${VAPOURSYNTH_LIB})
+        endif()
+    endif()
+    target_compile_definitions(vsavsreader PRIVATE _WIN32)
+elseif(APPLE)
+    target_link_libraries(vsavsreader PRIVATE
+        ${VAPOURSYNTH_LIBRARIES}
+        "-framework CoreFoundation"
+    )
+    set_target_properties(vsavsreader PROPERTIES
+        SUFFIX ".dylib"
+        PREFIX ""
+        INSTALL_RPATH "@loader_path;${VAPOURSYNTH_LIBRARY_DIRS}"
+    )
+else()
+    target_link_libraries(vsavsreader PRIVATE ${VAPOURSYNTH_LIBRARIES})
+    set_target_properties(vsavsreader PROPERTIES
+        SUFFIX ".so"
+        PREFIX ""
+        INSTALL_RPATH "$ORIGIN;${VAPOURSYNTH_LIBRARY_DIRS}"
+    )
+endif()
+
+set_target_properties(vsavsreader PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    POSITION_INDEPENDENT_CODE ON
+)
+
+# ── Install ─────────────────────────────────────────────────────────
+install(TARGETS vsavsreader
+    LIBRARY DESTINATION lib
+    RUNTIME DESTINATION bin
+)
