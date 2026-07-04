@@ -1,5 +1,4 @@
 //! VS_AvsReader — AviSynth script reader for VapourSynth (Zig ZAPI + C API)
-//! Every CPU cycle matters. Memory is a resource.
 const std = @import("std");
 const vapoursynth = @import("vapoursynth");
 const vs = vapoursynth.vapoursynth4;
@@ -11,14 +10,10 @@ const PLUGIN_ID = "chikuzen.does.not.have.his.own.domain.avsr";
 const PLUGIN_NAMESPACE = "avsr";
 const PLUGIN_NAME = "AviSynth Script Reader for VapourSynth v3.0.0";
 
-// ---------------------------------------------------------------------------
-// Per-instance data
-// ---------------------------------------------------------------------------
 const AvsReader = struct {
     avs_env: avs.Env,
     vi: vs.VideoInfo,
     write_frame: WriteFrameFn,
-    alloc: std.mem.Allocator,
 };
 
 const WriteFrameFn = *const fn (
@@ -28,9 +23,6 @@ const WriteFrameFn = *const fn (
     zapi: *const ZAPI,
 ) void;
 
-// ---------------------------------------------------------------------------
-// GetFrame callback — source filter (no input clip)
-// ---------------------------------------------------------------------------
 fn avsrGetFrame(
     n: c_int,
     activation_reason: vs.ActivationReason,
@@ -59,9 +51,6 @@ fn avsrGetFrame(
     return null;
 }
 
-// ---------------------------------------------------------------------------
-// Free callback
-// ---------------------------------------------------------------------------
 fn avsrFree(
     instance_data: ?*anyopaque,
     _: ?*vs.Core,
@@ -69,12 +58,8 @@ fn avsrFree(
 ) callconv(.c) void {
     const d: *AvsReader = @ptrCast(@alignCast(instance_data));
     d.avs_env.deinit();
-    d.alloc.destroy(d);
+    std.heap.c_allocator.destroy(d);
 }
-
-// ---------------------------------------------------------------------------
-// Plane writers
-// ---------------------------------------------------------------------------
 
 fn writeYUV(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
     const frame = reader.avs_env.getFrame(n) orelse return;
@@ -89,9 +74,9 @@ fn writeYUV(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAP
 
         var y: i32 = 0;
         while (y < h) : (y += 1) {
-            const sy = @as(usize, @intCast(y));
-            @memcpy(dp[sy * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
-                    src[sy * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
+            const yu = @as(usize, @intCast(y));
+            @memcpy(dp[yu * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
+                    src[yu * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
         }
     }
 }
@@ -104,6 +89,8 @@ fn writeRGB32(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const Z
     writeRGB(reader, dst, n, zapi, 4);
 }
 
+// AviSynth BGR is bottom-up; VapourSynth RGB is top-down.
+// sy walks source rows h-1→0, dy walks dest rows 0→h-1.
 fn writeRGB(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI, channels: i32) void {
     const frame = reader.avs_env.getFrame(n) orelse return;
     const src = reader.avs_env.getReadPtr(frame, 0) orelse return;
@@ -116,7 +103,6 @@ fn writeRGB(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAP
     const dg = zapi.getWritePtr(dst, 1);
     const db = zapi.getWritePtr(dst, 2);
 
-    // AviSynth BGR is bottom-up
     var sy: i32 = h - 1;
     var dy: i32 = 0;
     while (dy < h) : ({ dy += 1; sy -= 1; }) {
@@ -144,15 +130,12 @@ fn writeGray(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZA
 
     var y: i32 = 0;
     while (y < h) : (y += 1) {
-        const y_off = @as(usize, @intCast(y));
-        @memcpy(dp[y_off * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
-                src[y_off * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
+        const yu = @as(usize, @intCast(y));
+        @memcpy(dp[yu * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
+                src[yu * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
     }
 }
 
-// ---------------------------------------------------------------------------
-// Plugin entry point
-// ---------------------------------------------------------------------------
 export fn VapourSynthPluginInit2(
     plugin: *vs.Plugin,
     vspapi: *const vs.PLUGINAPI,
@@ -221,14 +204,11 @@ fn createFilter(
         return;
     }
 
-    // Create AviSynth environment via C API
     var avs_env = avs.Env.init(input) catch {
         mo.setError("avsr: failed to create AviSynth environment");
         return;
     };
-    errdefer avs_env.deinit();
 
-    // Resolve VS format
     const cf = avs_env.colorFamily();
     const ss = avs_env.subSampling();
     const color_family: vs.ColorFamily = switch (cf) {
@@ -248,9 +228,7 @@ fn createFilter(
         return;
     };
 
-    // Allocate instance data
-    const alloc = std.heap.c_allocator;
-    const data = alloc.create(AvsReader) catch {
+    const data = std.heap.c_allocator.create(AvsReader) catch {
         mo.setError("avsr: allocation failed");
         avs_env.deinit();
         return;
@@ -258,7 +236,6 @@ fn createFilter(
 
     const vs_width: i32 = if (bitdepth > 8) @divTrunc(avs_env.vi.width, 2) else avs_env.vi.width;
 
-    // Select writer
     const writer: WriteFrameFn = switch (cf) {
         .RGB => if (avs_env.vi.pixel_type == @intFromEnum(avs.PixelType.RGB32)) writeRGB32 else writeRGB24,
         .Gray => writeGray,
@@ -276,7 +253,6 @@ fn createFilter(
             .numFrames = avs_env.vi.num_frames,
         },
         .write_frame = writer,
-        .alloc = alloc,
     };
 
     const deps = [_]vs.FilterDependency{};
