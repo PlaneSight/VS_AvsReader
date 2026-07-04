@@ -37,3 +37,5 @@ Makefile
 __pycache__/
 *.pyc
 build/
+.zig-cache/
+zig-pkg/
