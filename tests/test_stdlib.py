@@ -248,6 +248,18 @@ class TestResizing:
         c = clip(core, self.src + '\nSincResize(160, 120)')
         assert c.width == 160
 
+    def test_bicubic_params(self, core):
+        c = clip(core, self.src + '\nBicubicResize(160, 120, b=0.5, c=0.5)')
+        assert (c.width, c.height) == (160, 120)
+
+    def test_lanczos_taps(self, core):
+        c = clip(core, self.src + '\nLanczosResize(160, 120, taps=5)')
+        assert c.width == 160
+
+    def test_gauss_param(self, core):
+        c = clip(core, self.src + '\nGaussResize(160, 120, p=30)')
+        assert c.width == 160
+
 
 class TestTemporal:
     src10 = f'BlankClip(length=10, width=32, height=32, {YV12})'
@@ -392,6 +404,22 @@ class TestLevels:
             'RGBAdjust(r=1.0, g=0.9, b=1.0)')
         assert c.format.color_family == vs.RGB
 
+    def test_levels_gamma(self, core):
+        c = clip(core, self.src + '\nLevels(16, 0.5, 235, 16, 235)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_levels_pc_range(self, core):
+        c = clip(core, self.src + '\nLevels(0, 1.0, 255, 0, 255)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_coloryuv_off(self, core):
+        c = clip(core, self.src + '\nColorYUV(off_u=10, off_v=-10)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_coloryuv_gamma(self, core):
+        c = clip(core, self.src + '\nColorYUV(gamma_y=1.2, gamma_u=1.0, gamma_v=1.0)')
+        assert c.format.id == vs.YUV420P8
+
 
 class TestChroma:
     src = f'BlankClip(width=64, height=64, {YV12})'
@@ -457,6 +485,22 @@ class TestAudio:
         c = clip(core, self.src + '\nConvertAudioTo16bit()')
         assert c.width == 32
 
+    def test_convert_audio_8bit(self, core):
+        c = clip(core, self.src + '\nConvertAudioTo8bit()')
+        assert c.width == 32
+
+    def test_convert_audio_24bit(self, core):
+        c = clip(core, self.src + '\nConvertAudioTo24bit()')
+        assert c.width == 32
+
+    def test_convert_audio_32bit(self, core):
+        c = clip(core, self.src + '\nConvertAudioTo32bit()')
+        assert c.width == 32
+
+    def test_convert_audio_float(self, core):
+        c = clip(core, self.src + '\nConvertAudioToFloat()')
+        assert c.width == 32
+
 
 class TestRobustness:
     def test_empty_script(self, core):
@@ -505,6 +549,18 @@ class TestRobustness:
         with pytest.raises(vs.Error, match="ColorYUV: Only work with YUV"):
             core.avsr.Eval(lines=f'BlankClip(width=64, height=48, {RGB32}, length=1)\nColorYUV(gain_y=10)')
 
+    def test_negative_crop_raises(self, core):
+        with pytest.raises(vs.Error):
+            core.avsr.Eval(lines=f'BlankClip(width=64, height=48, {YV12})\nCrop(-8, 0, 0, 0)')
+
+    def test_zero_resize_raises(self, core):
+        with pytest.raises(vs.Error):
+            core.avsr.Eval(lines=f'BlankClip(width=64, height=48, {YV12})\nPointResize(0, 0)')
+
+    def test_nonexistent_import_raises(self, core):
+        with pytest.raises(vs.Error):
+            core.avsr.Eval(lines='Import("nonexistent_dummy_file.avs")')
+
 
 # -- Overlays & text ----------------------------------------------------
 
@@ -534,6 +590,18 @@ class TestOverlays:
     def test_histogram_levels(self, core):
         c = clip(core, self.src + '\nHistogram("levels")')
         assert c.width >= 64
+
+    def test_subtitle_position(self, core):
+        c = clip(core, self.src + '\nSubtitle("pos", x=10, y=20)')
+        assert c.width == 64
+
+    def test_subtitle_alignment(self, core):
+        c = clip(core, self.src + '\nSubtitle("align", align=5)')
+        assert c.width == 64
+
+    def test_subtitle_frame_range(self, core):
+        c = clip(core, self.src + '\nSubtitle("range", first_frame=0, last_frame=5)')
+        assert c.width == 64
 
 
 # -- Plane manipulation ------------------------------------------------
@@ -579,6 +647,18 @@ class TestPlanes:
             c = clip(core, self.src_rgb + f'\nShow{ch}("YV12")')
             assert c.format.color_family == vs.YUV
 
+    def test_extract_y(self, core):
+        c = clip(core, self.src_yv12 + '\nExtractY()')
+        assert c.format.id == vs.GRAY8
+
+    def test_extract_u(self, core):
+        c = clip(core, self.src_yv12 + '\nExtractU()')
+        assert c.format.id == vs.GRAY8
+
+    def test_extract_v(self, core):
+        c = clip(core, self.src_yv12 + '\nExtractV()')
+        assert c.format.id == vs.GRAY8
+
 
 # -- Merge / compositing -----------------------------------------------
 
@@ -605,6 +685,12 @@ class TestMerge:
         src2 = f'BlankClip(width=64, height=48, {RGB24}, color=$808080)'
         c = clip(core, 'a=' + self.src_rgb24 + '\nb=' + src2 + '\nLayer(a, b, "add", 128)')
         assert c.format.color_family == vs.RGB
+
+    def test_overlay_with_mask(self, core):
+        src2 = f'BlankClip(width=32, height=24, {YV12}, color=$FFFFFF)'
+        mask = f'BlankClip(width=32, height=24, {Y8}, color=$808080)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nm=' + mask + '\nOverlay(a, b, x=16, y=12, mask=m)')
+        assert c.format.id == vs.YUV420P8
 
 
 # -- Compositing -------------------------------------------------------
