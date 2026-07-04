@@ -62,6 +62,7 @@ YV16  = 'pixel_type="YV16"'
 Y8    = 'pixel_type="Y8"'
 RGB24 = 'pixel_type="RGB24"'
 RGB32 = 'pixel_type="RGB32"'
+YUY2  = 'pixel_type="YUY2"'
 
 
 class TestSource:
@@ -145,6 +146,59 @@ class TestColourConversion:
         c = clip(core, self.src_yv12 + '\nConvertToYUY2()')
         assert c.format.color_family == vs.YUV
         assert c.format.bits_per_sample == 8
+
+    # -- Full format conversion matrix (all sources → all targets) ------
+
+    CONVERSION_MATRIX = [
+        # src,  target, expected_family, expected_id
+        # YV12 → RGB
+        (YV12, "RGB24", vs.RGB, vs.RGB24),
+        (YV12, "RGB32", vs.RGB, None),
+        # YV24 → remaining (YV12, RGB24, RGB32 already tested)
+        (YV24, "YV16", vs.YUV, vs.YUV422P8),
+        (YV24, "Y8", vs.GRAY, vs.GRAY8),
+        (YV24, "YUY2", vs.YUV, None),
+        # YV16 → all except YV12 (already tested)
+        (YV16, "YV24", vs.YUV, vs.YUV444P8),
+        (YV16, "Y8", vs.GRAY, vs.GRAY8),
+        (YV16, "RGB24", vs.RGB, vs.RGB24),
+        (YV16, "RGB32", vs.RGB, None),
+        (YV16, "YUY2", vs.YUV, None),
+        # Y8 → all except YV12 (already tested)
+        (Y8, "YV24", vs.YUV, vs.YUV444P8),
+        (Y8, "YV16", vs.YUV, vs.YUV422P8),
+        (Y8, "RGB24", vs.RGB, vs.RGB24),
+        (Y8, "RGB32", vs.RGB, None),
+        (Y8, "YUY2", vs.YUV, None),
+        # RGB24 → all except YV24 (already tested)
+        (RGB24, "YV12", vs.YUV, vs.YUV420P8),
+        (RGB24, "YV16", vs.YUV, vs.YUV422P8),
+        (RGB24, "Y8", vs.GRAY, vs.GRAY8),
+        (RGB24, "RGB32", vs.RGB, None),
+        (RGB24, "YUY2", vs.YUV, None),
+        # RGB32 → all targets
+        (RGB32, "YV12", vs.YUV, vs.YUV420P8),
+        (RGB32, "YV24", vs.YUV, vs.YUV444P8),
+        (RGB32, "YV16", vs.YUV, vs.YUV422P8),
+        (RGB32, "Y8", vs.GRAY, vs.GRAY8),
+        (RGB32, "RGB24", vs.RGB, vs.RGB24),
+        (RGB32, "YUY2", vs.YUV, None),
+        # YUY2 → all targets
+        (YUY2, "YV12", vs.YUV, vs.YUV420P8),
+        (YUY2, "YV24", vs.YUV, vs.YUV444P8),
+        (YUY2, "YV16", vs.YUV, vs.YUV422P8),
+        (YUY2, "Y8", vs.GRAY, vs.GRAY8),
+        (YUY2, "RGB24", vs.RGB, vs.RGB24),
+        (YUY2, "RGB32", vs.RGB, None),
+    ]
+
+    @pytest.mark.parametrize("src_fmt,target,expected_family,expected_id", CONVERSION_MATRIX)
+    def test_conversion_matrix(self, core, src_fmt, target, expected_family, expected_id):
+        src = f"BlankClip(width=64, height=64, {src_fmt})"
+        c = clip(core, src + f"\nConvertTo{target}()")
+        assert c.format.color_family == expected_family
+        if expected_id is not None:
+            assert c.format.id == expected_id
 
 
 class TestResizing:
@@ -241,6 +295,22 @@ class TestTemporal:
         c = clip(core, self.src10 + '\nFadeOut0(3)')
         assert c.num_frames == 10
 
+    def test_fadein_color(self, core):
+        c = clip(core, self.src10 + '\nFadeIn(5, color=$FFFFFF)')
+        assert c.num_frames == 11
+
+    def test_fadeout_color(self, core):
+        c = clip(core, self.src10 + '\nFadeOut(5, color=$000000)')
+        assert c.num_frames == 11
+
+    def test_fadein2(self, core):
+        c = clip(core, self.src10 + '\nFadeIn2(5)')
+        assert c.num_frames == 12
+
+    def test_fadeout2(self, core):
+        c = clip(core, self.src10 + '\nFadeOut2(5)')
+        assert c.num_frames == 12
+
     def test_dissolve(self, core):
         c = clip(core, 'a = ' + self.src10 + '\nb = ' + self.src10 + '\nreturn Dissolve(a, b, 5)')
         assert c.num_frames == 15
@@ -293,6 +363,18 @@ class TestSpatial:
         assert (c.width, c.height) == (328, 248)
 
 
+class TestSpatialAdvanced:
+    src = f'BlankClip(width=64, height=64, {YV12})'
+
+    def test_blur(self, core):
+        c = clip(core, self.src + '\nBlur(1.0)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_sharpen(self, core):
+        c = clip(core, self.src + '\nSharpen(0.5)')
+        assert c.format.id == vs.YUV420P8
+
+
 class TestLevels:
     src = f'BlankClip(width=64, height=64, {YV12})'
 
@@ -334,6 +416,10 @@ class TestFrameProps:
     def test_info(self, core):
         c = clip(core, self.src + '\nInfo()')
         assert c.width >= 32
+
+    def test_assume_scaled_fps(self, core):
+        c = clip(core, self.src + '\nAssumeScaledFPS(60, 1)')
+        assert c.width == 32
 
 
 class TestInterlacing:
@@ -521,6 +607,27 @@ class TestMerge:
         assert c.format.color_family == vs.RGB
 
 
+# -- Compositing -------------------------------------------------------
+
+class TestCompositing:
+    src_yv12 = f'BlankClip(width=64, height=48, {YV12})'
+    src_rgb32 = f'BlankClip(width=64, height=48, {RGB32})'
+
+    def test_subtract(self, core):
+        src2 = f'BlankClip(width=64, height=48, {YV12}, color=$808080)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nSubtract(a, b)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_mask(self, core):
+        mask = f'BlankClip(width=64, height=48, {RGB32})'
+        c = clip(core, 'a=' + self.src_rgb32 + '\nb=' + mask + '\nMask(a, b)')
+        assert c.format.color_family == vs.RGB
+
+    def test_reset_mask(self, core):
+        c = clip(core, self.src_rgb32 + '\nResetMask()')
+        assert c.format.color_family == vs.RGB
+
+
 # -- Transforms --------------------------------------------------------
 
 class TestTransforms:
@@ -587,6 +694,14 @@ class TestColourFilters:
         c = clip(core, self.src_yv12 + '\nColorYUV(cont_u=10, cont_v=-10)')
         assert c.format.id == vs.YUV420P8
 
+    def test_tweak_hue(self, core):
+        c = clip(core, self.src_yv12 + '\nTweak(hue=45.0)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_tweak_all_params(self, core):
+        c = clip(core, self.src_yv12 + '\nTweak(sat=1.2, bright=3, cont=1.1, hue=15.0)')
+        assert c.format.id == vs.YUV420P8
+
     # -- Workarounds: ConvertToYV12 before YUV filters from RGB -------
 
     def test_tweak_after_convert_from_rgb(self, core):
@@ -649,6 +764,19 @@ class TestMiscFilters:
             'b=BlankClip(length=1, width=64, height=48, ' + YV12 + ', color=$808080)\n'
             'ConditionalFilter(a, b, a, "AverageLuma()", ">", "0")')
         assert c.width == 64
+
+    def test_yv12_to_rgb24_to_yv12(self, core):
+        c = clip(core, self.src_yv12 + '\nConvertToRGB24()\nConvertToYV12()')
+        assert c.format.id == vs.YUV420P8
+
+    def test_yv12_to_yv24_to_yv12(self, core):
+        c = clip(core, self.src_yv12 + '\nConvertToYV24()\nConvertToYV12()')
+        assert c.format.id == vs.YUV420P8
+
+    def test_convert_tweak_convert(self, core):
+        src_rgb = f'BlankClip(length=1, width=64, height=48, {RGB24})'
+        c = clip(core, src_rgb + '\nConvertToYV12()\nTweak(sat=1.0)\nConvertToRGB24()')
+        assert c.format.color_family == vs.RGB
 
     @pytest.mark.parametrize("fmt_str,fmt_id", [
         ("RGB24", vs.RGB24),
