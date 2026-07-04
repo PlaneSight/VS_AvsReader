@@ -6,10 +6,6 @@ const ZAPI = vapoursynth.ZAPI;
 
 const avs = @import("avs_capi.zig");
 
-const PLUGIN_ID = "chikuzen.does.not.have.his.own.domain.avsr";
-const PLUGIN_NAMESPACE = "avsr";
-const PLUGIN_NAME = "AviSynth Script Reader for VapourSynth v3.0.0";
-
 const AvsReader = struct {
     avs_env: avs.Env,
     vi: vs.VideoInfo,
@@ -136,44 +132,12 @@ fn writeGray(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZA
     }
 }
 
-export fn VapourSynthPluginInit2(
-    plugin: *vs.Plugin,
-    vspapi: *const vs.PLUGINAPI,
-) void {
-    ZAPI.Plugin.config(
-        PLUGIN_ID,
-        PLUGIN_NAMESPACE,
-        PLUGIN_NAME,
-        .{ .major = 3, .minor = 0, .patch = 0 },
-        plugin,
-        vspapi,
-    );
-
-    ZAPI.Plugin.function(
-        "Import",
-        "script:data;bitdepth:int:opt;alpha:int:opt;",
-        "clip:vnode;",
-        importCreate,
-        plugin,
-        vspapi,
-    );
-
-    ZAPI.Plugin.function(
-        "Eval",
-        "lines:data;bitdepth:int:opt;alpha:int:opt;",
-        "clip:vnode;",
-        evalCreate,
-        plugin,
-        vspapi,
-    );
-}
-
-fn importCreate(
+pub fn importCreate(
     in: ?*const vs.Map, out: ?*vs.Map,
     _: ?*anyopaque, core: ?*vs.Core, vsapi: ?*const vs.API,
 ) callconv(.c) void { createFilter(in, out, "Import", core, vsapi); }
 
-fn evalCreate(
+pub fn evalCreate(
     in: ?*const vs.Map, out: ?*vs.Map,
     _: ?*anyopaque, core: ?*vs.Core, vsapi: ?*const vs.API,
 ) callconv(.c) void { createFilter(in, out, "Eval", core, vsapi); }
