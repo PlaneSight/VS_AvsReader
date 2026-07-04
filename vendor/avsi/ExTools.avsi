@@ -234,7 +234,7 @@ function ex_lutxyza(clip a, clip b, clip c, clip d, string str, string "cstr", i
 # Use 'show' to choose output; 0: clip 'a'  1: clip 'b'  2: diff  3: diff subtitled (no frameprops)
 #
 # Dependencies:
-#           SimilarityMetrics (for HD inputs when metric: ALL or simply metric: SSIM, BSSIM, GMSD or MDSI)
+#           SimilarityMetrics (for HD inputs when metric: ALL or simply metric: SSIM, BSSIM, ex_GMSD or ex_MDSI)
 #               fmtconv
 #           TransformsPack    (for metric: RedMean or OkMSE)
 #           VMAF              (for metric: MS-SSIM, CAMBI or CIEDE2000)
@@ -244,7 +244,7 @@ function ex_lutxyza(clip a, clip b, clip c, clip d, string str, string "cstr", i
 #    (
 #    clip a,
 #    clip b,
-#    string "metric"="none" ("none"/ "ALL"/ "--"/ "ME"/ "MAE"/ "SMAE"/ "MAD"/ "MAD2"/ "MSE"/ "MSLE"/ "RMSE"/ "CHAR"/ "--"/ "OkMSE"/ "RedMe"/ "CIEDE2000"/ "R2"/ "ZTest"/ "CAMBI"/ "--"/ "PSNR"/ "SSIM"/ "MS_SSIM"/ "BSSIM"/ "SSIMU"/ "SSIMU2"/ "GMSD"/ "MDSI"/ "BUTT"),
+#    string "metric"="none" ("none"/ "ALL"/ "--"/ "ME"/ "MAE"/ "SMAE"/ "MAD"/ "MAD2"/ "MSE"/ "MSLE"/ "RMSE"/ "CHAR"/ "--"/ "OkMSE"/ "RedMe"/ "CIEDE2000"/ "R2"/ "ZTest"/ "CAMBI"/ "--"/ "PSNR"/ "SSIM"/ "MS_SSIM"/ "BSSIM"/ "SSIMU"/ "SSIMU2"/ "ex_GMSD"/ "ex_MDSI"/ "BUTT"),
 #    bool "aug"=false,
 #    bool "dif"=false,
 #    int "show"=2 (0 to 3)
@@ -273,9 +273,9 @@ function ex_lutxyza(clip a, clip b, clip c, clip d, string str, string "cstr", i
 # SSIMU   - SSIMULACRA  - Structural SIMilarity Unveiling Local And Compression Related Artifacts
 # SSIMU2  - SSIMULACRA2 - Structural SIMilarity Unveiling Local And Compression Related Artifacts, Version 2 (https://github.com/cloudinary/ssimulacra2)
 # BSSIM   - Structural SIMilarity for Blurred
-# GMSD    - Gradient Magnitude Similarity Deviation
+# ex_GMSD    - Gradient Magnitude Similarity Deviation
 # BUTT    - Butteraugli psychovisual similarity index for DCT compression. Google's open source image metric tool tuned to high quality content (mainly between -q 90 to 95 in JPEG scale)
-# MDSI    - Mean Deviation Similarity Index. IQA model that utilizes gradient similarity (GS), chromaticity similarity (CS), and deviation pooling (DP)
+# ex_MDSI    - Mean Deviation Similarity Index. IQA model that utilizes gradient similarity (GS), chromaticity similarity (CS), and deviation pooling (DP)
 # CAMBI   - Contrast-Aware Multiscale Banding Index
 # CIEDE2000-CIE Delta-E 2000
 
@@ -337,9 +337,9 @@ function ex_makediff(clip a, clip b, bool "dif", val "aug", bool "tv_range", str
               mcf == "OkLab"       ? "OkMSE"  : UCase(mcf)
 
         mcfa  =  mcf == "ALL"
-        mPLUG = (mcf == "BSSIM"   || mcf == "GMSD"      || mcf == "MDSI" || mcf == "SSIM")
+        mPLUG = (mcf == "BSSIM"   || mcf == "ex_GMSD"      || mcf == "ex_MDSI" || mcf == "SSIM")
         mVMAF =  mcf == "MS_SSIM" || mcf == "CIEDE2000"
-        RGBm  =  mcf == "OkMSE"   || mcf == "CIEDE2000" || mcf == "rMEA" || mcf == "MDSI" || mcf == "BUTT"
+        RGBm  =  mcf == "OkMSE"   || mcf == "CIEDE2000" || mcf == "rMEA" || mcf == "ex_MDSI" || mcf == "BUTT"
 
         isy && !mcfa ? Assert(!RGBm, "ex_makediff: Unsupported mode for greyscale clips") : nop()
 
@@ -353,10 +353,10 @@ function ex_makediff(clip a, clip b, bool "dif", val "aug", bool "tv_range", str
         matA = isUHD ? "2020:f" : isHD ? "709:f" : "170m:f"
 
         a1   = mcfa && sh < 2 ? a.propClearAll() :a
-        a1   = mcfa || mcf == "CAMBI" || mVMAF ? mcfa && isHD ? _IQA_downsample(a1, fulls=fs, fulld=true).ConvertBits(10,dither=-1,fulls=true) : a1.ConvertBits(10,dither=-1,fulls=fs,fulld=true) : a1.ConvertBits(32,fulls=fs,fulld=true)  # _IQA_downsample() is not much better than bicubic(b=-0.5,c=0.3), but better in any case.
-        b1   = mcfa || mcf == "CAMBI" || mVMAF ? mcfa && isHD ? _IQA_downsample(b,  fulls=fs, fulld=true).ConvertBits(10,dither=-1,fulls=true) : b. ConvertBits(10,dither=-1,fulls=fs,fulld=true) : b. ConvertBits(32,fulls=fs,fulld=true)
-        a1   = rgb && (mcfa || mcf != "MDSI" && mcf != "BUTT" && mcf != "rMEA" && mcf != "OkMSE") ? a1.ConvertToYUV420(matrix=matA) : a1
-        b1   = rgb && (mcfa || mcf != "MDSI" && mcf != "BUTT" && mcf != "rMEA" && mcf != "OkMSE") ? b1.ConvertToYUV420(matrix=matA) : b1
+        a1   = mcfa || mcf == "CAMBI" || mVMAF ? mcfa && isHD ? ex_IQA_downsample(a1, fulls=fs, fulld=true).ConvertBits(10,dither=-1,fulls=true) : a1.ConvertBits(10,dither=-1,fulls=fs,fulld=true) : a1.ConvertBits(32,fulls=fs,fulld=true)  # ex_IQA_downsample() is not much better than bicubic(b=-0.5,c=0.3), but better in any case.
+        b1   = mcfa || mcf == "CAMBI" || mVMAF ? mcfa && isHD ? ex_IQA_downsample(b,  fulls=fs, fulld=true).ConvertBits(10,dither=-1,fulls=true) : b. ConvertBits(10,dither=-1,fulls=fs,fulld=true) : b. ConvertBits(32,fulls=fs,fulld=true)
+        a1   = rgb && (mcfa || mcf != "ex_MDSI" && mcf != "BUTT" && mcf != "rMEA" && mcf != "OkMSE") ? a1.ConvertToYUV420(matrix=matA) : a1
+        b1   = rgb && (mcfa || mcf != "ex_MDSI" && mcf != "BUTT" && mcf != "rMEA" && mcf != "OkMSE") ? b1.ConvertToYUV420(matrix=matA) : b1
         a1   = mcfa || mcf == "CAMBI" || mVMAF ? isy ? CombinePlanes(a1, planes="YUV", source_planes="YYY", pixel_type="YUV444"+(BitsPerComponent(a1)==32?"PS":"P10")) : a1 : a1
         b1   = mcfa || mcf == "CAMBI" || mVMAF ? isy ? CombinePlanes(b1, planes="YUV", source_planes="YYY", pixel_type="YUV444"+(BitsPerComponent(b1)==32?"PS":"P10")) : b1 : b1
 
@@ -369,11 +369,11 @@ function ex_makediff(clip a, clip b, bool "dif", val "aug", bool "tv_range", str
         b2   = rgb  || isy || is444(b1) ? b1.ConvertToPlanarRGB(matrix=matA) : b1.ConvertToPlanarRGB(matrix=matA,chromaresample="bicubic",param1=0,param2=0.5)
 
         y    = mcfa || mcf == "SSIM" || mcf == "BSSIM" ? \
-                                        vsSSIM(b1, y, show=1, fulls=true) : y
+                                        ex_vsSSIM(b1, y, show=1, fulls=true) : y
         y    = mcfa || mcf == "BSSIM" ? BSSIM (b1, y, show=1, fulls=true) : y
-        y    = mcfa                   ? rgb || isy ? GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA) :      is444(b1) ? GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA) : GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA,chromaresample="bicubic",param1=0,param2=0.5) : \
-                       mcf == "GMSD"  ?              GMSD(b1, y, show=1, fulls=true) : mcf=="SSIMU" || mcf=="SSIMU2" || mcf=="MDSI" || mcf=="BUTT" || mcf=="rMEA" || mcf=="OkMSE" ? is444(y) ? y.ConvertToPlanarRGB(matrix=matA) :      y.ConvertToPlanarRGB(matrix=matA,chromaresample="bicubic",param1=0,param2=0.5) : y
-        y    = mcfa || mcf == "MDSI"  ? !isy ? MDSI  (b2, y, show=1, fulls=true)                                 : y : y
+        y    = mcfa                   ? rgb || isy ? ex_GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA) :      is444(b1) ? ex_GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA) : ex_GMSD(b1, y, show=1, fulls=true).ConvertToPlanarRGB(matrix=matA,chromaresample="bicubic",param1=0,param2=0.5) : \
+                       mcf == "ex_GMSD"  ?              ex_GMSD(b1, y, show=1, fulls=true) : mcf=="SSIMU" || mcf=="SSIMU2" || mcf=="ex_MDSI" || mcf=="BUTT" || mcf=="rMEA" || mcf=="OkMSE" ? is444(y) ? y.ConvertToPlanarRGB(matrix=matA) :      y.ConvertToPlanarRGB(matrix=matA,chromaresample="bicubic",param1=0,param2=0.5) : y
+        y    = mcfa || mcf == "ex_MDSI"  ? !isy ? ex_MDSI  (b2, y, show=1, fulls=true)                                 : y : y
         y    = mcfa || FindStr(UCase(mcf),"SSIMU")>0 ? !isy ? ssimulacra(y, b2, feature=mcfa?2:mcf=="SSIMU"?0:1) : y : y
         b3   = mcfa || mcf == "BUTT"  ? !isy ? Butteraugli(y, b2)                                                : y : y  # Very slow filter ~3fps
 

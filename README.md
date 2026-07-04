@@ -90,12 +90,26 @@ VS_AvsReader/
 │   ├── AvsReader.h
 │   ├── myvshelper.h
 │   └── plugin.cpp
-├── vendor/                 # Vendored SDK headers
+├── vendor/                 # Vendored dependencies
 │   ├── vapoursynth/
 │   │   └── VapourSynth4.h
-│   └── avisynth/
-│       ├── avisynth.h
-│       └── avs/...
+│   ├── avisynth/
+│   │   ├── avisynth.h
+│   │   └── avs/...
+│   ├── avsi/               # Vendored AviSynth+ scripts
+│   │   ├── ExTools.avsi
+│   │   ├── FilmGrain.avsi
+│   │   ├── GradFun3.avsi
+│   │   ├── ResizersPack.avsi
+│   │   ├── SMDegrain.avsi
+│   │   └── TransformsPack.avsi
+│   └── plugins/            # Vendored AviSynth+ plugin binaries
+│       ├── libconvertstacked.dylib
+│       ├── libimageseq.dylib
+│       ├── libshibatch.dylib
+│       └── libtimestretch.dylib
+├── tests/                  # Test suite
+│   └── test_plugin.py
 └── build/                  # Build output (gitignored)
 ```
 

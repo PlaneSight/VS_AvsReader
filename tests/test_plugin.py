@@ -12,7 +12,7 @@ import vapoursynth as vs
 import pytest
 
 PLUGIN = Path(__file__).resolve().parent.parent / "build" / "vsavsreader.dylib"
-AVSI = Path(__file__).resolve().parent.parent / "avsi"
+AVSI = Path(__file__).resolve().parent.parent / "vendor" / "avsi"
 
 
 @pytest.fixture(scope="session")
