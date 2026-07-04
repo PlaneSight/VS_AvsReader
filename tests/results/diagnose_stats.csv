@@ -1,0 +1,28 @@
+label,plane,min,max,avg
+AviSynth ColorBars (src),Y,7.0,235.0,0.3628002450980392
+AviSynth ColorBars (src),U,44.0,212.0,0.5242728758169934
+AviSynth ColorBars (src),V,44.0,212.0,0.499656862745098
+VS BlankClip gray,Y,128.0,128.0,0.5019607843137255
+VS BlankClip gray,U,128.0,128.0,0.5019607843137255
+VS BlankClip gray,V,128.0,128.0,0.5019607843137255
+AviSynth BlankClip gray,Y,126.0,126.0,0.49411764705882355
+AviSynth BlankClip gray,U,128.0,128.0,0.5019607843137255
+AviSynth BlankClip gray,V,128.0,128.0,0.5019607843137255
+|avs_blank - vs_blank|,Y,2.0,2.0,0.00784313725490196
+|avs_blank - vs_blank|,U,128.0,128.0,0.5019607843137255
+|avs_blank - vs_blank|,V,128.0,128.0,0.5019607843137255
+VS Expr invert (port),Y,20.0,248.0,0.6371997549019608
+VS Expr invert (port),U,44.0,212.0,0.5242728758169934
+VS Expr invert (port),V,44.0,212.0,0.499656862745098
+AviSynth ex_invert (ref),Y,20.0,248.0,0.6371997549019608
+AviSynth ex_invert (ref),U,44.0,212.0,0.5242728758169934
+AviSynth ex_invert (ref),V,44.0,212.0,0.499656862745098
+|port_invert - ref_invert|,Y,0.0,0.0,0.0
+|port_invert - ref_invert|,U,44.0,212.0,0.5242728758169934
+|port_invert - ref_invert|,V,44.0,212.0,0.499656862745098
+AviSynth raw Expr 255 x -,Y,20.0,248.0,0.6371997549019608
+AviSynth raw Expr 255 x -,U,44.0,212.0,0.5242728758169934
+AviSynth raw Expr 255 x -,V,44.0,212.0,0.499656862745098
+|port_invert - avs_raw_invert|,Y,0.0,0.0,0.0
+|port_invert - avs_raw_invert|,U,44.0,212.0,0.5242728758169934
+|port_invert - avs_raw_invert|,V,44.0,212.0,0.499656862745098

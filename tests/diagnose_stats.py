@@ -109,6 +109,38 @@ diff_raw = core.std.Expr([port_invert, avs_raw_invert],
                          expr=["x y - abs", "", ""])
 stats("|port_invert - avs_raw_invert|", diff_raw)
 
-# Build and print DataFrame
+# Build DataFrame
 df = pl.DataFrame(rows)
-print(df)
+
+# Output
+results_dir = Path(__file__).parent / "results"
+results_dir.mkdir(parents=True, exist_ok=True)
+
+# CSV
+df.write_csv(results_dir / "diagnose_stats.csv")
+
+# Markdown
+pivoted = df.pivot(on="plane", index="label", values=["min", "max", "avg"])
+
+md_lines = [
+    "# Diagnose Stats",
+    "",
+    "Per-plane min, max, and average pixel values for each processing stage.",
+    f"Resolution: {W}x{H}, frames: {NFRAMES}.",
+    "",
+]
+cols = pivoted.columns
+md_lines.append("| " + " | ".join(cols) + " |")
+md_lines.append("| " + " | ".join("---" for _ in cols) + " |")
+for row in pivoted.iter_rows():
+    formatted = []
+    for val in row:
+        if isinstance(val, float):
+            formatted.append(f"{val:.2f}")
+        else:
+            formatted.append(str(val))
+    md_lines.append("| " + " | ".join(formatted) + " |")
+
+(results_dir / "diagnose_stats.md").write_text("\n".join(md_lines) + "\n")
+
+print("Results written to tests/results/diagnose_stats.{md,csv}")

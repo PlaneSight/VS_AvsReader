@@ -25,8 +25,6 @@ def dump_first_rows(label, clip, plane=0, nrows=4):
     w = f.width if plane == 0 else f.width // 2
     h = f.height if plane == 0 else f.height // 2
 
-    print(f"--- {label} plane {plane}: {w}x{h} stride={stride} ---")
-
     # Same ctypes raw-byte-reading logic as before
     addr = ctypes.addressof(
         ctypes.cast(ptr, ctypes.POINTER(ctypes.c_uint8)).contents
@@ -41,18 +39,14 @@ def dump_first_rows(label, clip, plane=0, nrows=4):
             records.append({"row": y, "col": x, "value": int(row_slice[x])})
 
     df_long = pl.DataFrame(records)
-    print(df_long)
-    print()
 
-    # Also build and print a pivoted (wide) view for compact visual scanning
+    # Build pivoted (wide) view for compact visual scanning
     df_wide = df_long.pivot(
-        index="col", columns="row", values="value", aggregate_function="first"
+        index="col", on="row", values="value", aggregate_function="first"
     ).sort("col")
     # Rename columns from integer row numbers to "R0", "R1", etc.
     rename_map = {c: f"R{c}" for c in df_wide.columns if c != "col"}
     df_wide = df_wide.rename(rename_map)
-    print(df_wide)
-    print()
 
     return {
         "label": f"{label} plane {plane}",
@@ -61,6 +55,7 @@ def dump_first_rows(label, clip, plane=0, nrows=4):
         "height": h,
         "stride": stride,
         "df": df_long,
+        "df_wide": df_wide,
         "frame": f,  # keep ref alive
     }
 
@@ -144,10 +139,6 @@ _ = all_frames
 
 # ---------------------------------------------------------------------------
 # Final summary DataFrame: compare actual vs expected per test
-print("=" * 72)
-print("SUMMARY: expected vs actual pixel values")
-print("=" * 72)
-
 summary_records = []
 for r in results:
     actual_mean = r["df"].get_column("value").mean()
@@ -167,4 +158,47 @@ for r in results:
     )
 
 summary_df = pl.DataFrame(summary_records)
-print(summary_df)
+
+# ---------------------------------------------------------------------------
+# Write results to files
+results_dir = Path(__file__).parent / "results"
+results_dir.mkdir(parents=True, exist_ok=True)
+
+# 1. Write CSV
+csv_path = results_dir / "diagnose_pixels.csv"
+summary_df.write_csv(csv_path)
+
+# 2. Build and write Markdown
+md_lines = []
+md_lines.append("# Diagnose Pixels — Pixel-Level Diagnostic Results")
+md_lines.append("")
+md_lines.append("## Summary: Expected vs Actual Pixel Values")
+md_lines.append("")
+
+# Convert summary_df to markdown table
+cols = summary_df.columns
+md_lines.append("| " + " | ".join(cols) + " |")
+md_lines.append("| " + " | ".join("---" for _ in cols) + " |")
+for row in summary_df.iter_rows():
+    md_lines.append("| " + " | ".join(str(v) for v in row) + " |")
+
+md_lines.append("")
+md_lines.append("## Per-Test Details")
+md_lines.append("")
+
+for r in results:
+    md_lines.append(f"### {r['label']}")
+    md_lines.append(f"- **Dimensions:** {r['width']}×{r['height']}")
+    md_lines.append(f"- **Stride:** {r['stride']}")
+    md_lines.append(f"- **Expected:** {r['expected']}")
+    md_lines.append("")
+    # First 2 rows of the wide DataFrame (compact pixel sample)
+    df_wide_top = r["df_wide"].head(2)
+    md_lines.append(df_wide_top.write_csv(separator="|"))
+    md_lines.append("")
+
+md_path = results_dir / "diagnose_pixels.md"
+md_path.write_text("\n".join(md_lines))
+
+# 3. Single-line summary to stdout
+print("Results written to tests/results/diagnose_pixels.{md,csv}")

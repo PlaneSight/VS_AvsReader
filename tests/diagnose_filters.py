@@ -224,26 +224,18 @@ for name, avs_extra, vs_fn in tests:
     else:
         md = None  # dimension mismatch — no pixel diff possible
 
+    def _s(s_list, i, j):
+        """Safe indexed access: s_list[i][j] or None if out of range."""
+        return s_list[i][j] if i < len(s_list) else None
+
     results.append({
         "filter": name,
-        "avs_Y_min": avs_s[0][0],
-        "avs_Y_max": avs_s[0][1],
-        "avs_Y_avg": avs_s[0][2],
-        "avs_U_min": avs_s[1][0],
-        "avs_U_max": avs_s[1][1],
-        "avs_U_avg": avs_s[1][2],
-        "avs_V_min": avs_s[2][0],
-        "avs_V_max": avs_s[2][1],
-        "avs_V_avg": avs_s[2][2],
-        "vs_Y_min": vs_s[0][0],
-        "vs_Y_max": vs_s[0][1],
-        "vs_Y_avg": vs_s[0][2],
-        "vs_U_min": vs_s[1][0],
-        "vs_U_max": vs_s[1][1],
-        "vs_U_avg": vs_s[1][2],
-        "vs_V_min": vs_s[2][0],
-        "vs_V_max": vs_s[2][1],
-        "vs_V_avg": vs_s[2][2],
+        "avs_Y_min": _s(avs_s, 0, 0), "avs_Y_max": _s(avs_s, 0, 1), "avs_Y_avg": _s(avs_s, 0, 2),
+        "avs_U_min": _s(avs_s, 1, 0), "avs_U_max": _s(avs_s, 1, 1), "avs_U_avg": _s(avs_s, 1, 2),
+        "avs_V_min": _s(avs_s, 2, 0), "avs_V_max": _s(avs_s, 2, 1), "avs_V_avg": _s(avs_s, 2, 2),
+        "vs_Y_min": _s(vs_s, 0, 0),  "vs_Y_max": _s(vs_s, 0, 1),  "vs_Y_avg": _s(vs_s, 0, 2),
+        "vs_U_min": _s(vs_s, 1, 0),  "vs_U_max": _s(vs_s, 1, 1),  "vs_U_avg": _s(vs_s, 1, 2),
+        "vs_V_min": _s(vs_s, 2, 0),  "vs_V_max": _s(vs_s, 2, 1),  "vs_V_avg": _s(vs_s, 2, 2),
         "max_diff": md,
     })
 
@@ -252,28 +244,56 @@ if not results:
 else:
     df = pl.DataFrame(results)
 
-    print("=" * 40)
-    print("Full Results")
-    print("=" * 40)
-    print(df)
+    out_dir = Path(__file__).parent / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # -----------------------------------------------------------------------
-    # Summary
-    # -----------------------------------------------------------------------
+    # Write CSV
+    df.write_csv(str(out_dir / "diagnose_filters.csv"))
+
+    # Summaries
     exact = df.filter(pl.col("max_diff") == 0.0)
     with_diff = df.filter(pl.col("max_diff") > 0.0)
     no_diff = df.filter(pl.col("max_diff").is_null())
 
-    print()
-    print("=" * 40)
-    print("Summary")
-    print("=" * 40)
-    print(f"bit-exact (max_diff == 0): {len(exact)}")
+    # Build markdown
+    md: list[str] = []
+    md.append("# diagnose_filters.py")
+    md.append("")
+    md.append("## Source")
+    md.append("")
+    md.append(f"- AviSynth ColorBars {W}x{H} YUV420P8")
+    md.append(f"- Frames: {N}")
+    md.append("")
+
+    md.append("## Bit-Exact Filters")
+    md.append("")
+    md.append(f"**Count:** {len(exact)}")
+    md.append("")
     if len(exact) > 0:
-        print(exact.select("filter"))
-    print(f"\nnon-bit-exact (max_diff > 0): {len(with_diff)}")
+        for f in exact.get_column("filter").to_list():
+            md.append(f"- `{f}`")
+    md.append("")
+
+    md.append("## Non-Bit-Exact Filters")
+    md.append("")
+    md.append(f"**Count:** {len(with_diff)}")
+    md.append("")
     if len(with_diff) > 0:
-        print(with_diff.select("filter", "max_diff"))
-    print(f"\ndim mismatch (no diff computed): {len(no_diff)}")
+        md.append("| Filter | Max Diff |")
+        md.append("|--------|----------|")
+        for row in with_diff.select("filter", "max_diff").iter_rows():
+            md.append(f"| `{row[0]}` | {row[1]:.6f} |")
+    md.append("")
+
+    md.append("## Dimension Mismatch")
+    md.append("")
+    md.append(f"**Count:** {len(no_diff)}")
+    md.append("")
     if len(no_diff) > 0:
-        print(no_diff.select("filter"))
+        for f in no_diff.get_column("filter").to_list():
+            md.append(f"- `{f}`")
+    md.append("")
+
+    (out_dir / "diagnose_filters.md").write_text("\n".join(md))
+
+    print("Results written to tests/results/diagnose_filters.{md,csv}")

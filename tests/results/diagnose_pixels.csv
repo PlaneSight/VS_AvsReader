@@ -1,0 +1,8 @@
+test,plane,expected,actual_mean,actual_min,actual_max,all_match
+AviSynth BlankClip $808080 plane 0,0,128,126.0,126,126,false
+"VS BlankClip [128,128,128] plane 0",0,128,128.0,128,128,true
+AviSynth BlankClip $FFFFFF plane 0,0,255,235.0,235,235,false
+AviSynth BlankClip $000000 plane 0,0,0,16.0,16,16,false
+  Y plane plane 0,0,128,102.0,102,102,false
+"  plane 1 (AviSynth V=128, VS expects U) plane 1",1,128,142.0,142,142,false
+"  plane 2 (AviSynth U=80, VS expects V) plane 2",2,80,145.0,145,145,false
