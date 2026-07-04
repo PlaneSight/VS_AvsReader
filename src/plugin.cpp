@@ -26,6 +26,7 @@
 #include "AvsReader.h"
 #include "myvshelper.h"
 #include <new>
+#include <string>
 
 // Shared reader refcount. Each output node increments this; the last free
 // deletes the underlying AvsReader.
@@ -57,10 +58,22 @@ get_frame(int n, int activationReason, void* instanceData,
     api->mapSetInt(props, "_DurationNum", rvi->fpsDen, maReplace);
     api->mapSetInt(props, "_DurationDen", rvi->fpsNum, maReplace);
 
-    PVideoFrame src = reader->getAvisynthFrame(n);
-    VSFrame* dsts[2] = { dst, nullptr };
-    out->write_frame(dsts, src, ovi.format.numPlanes, api);
-    return dst;
+    try {
+        PVideoFrame src = reader->getAvisynthFrame(n);
+        VSFrame* dsts[2] = { dst, nullptr };
+        out->write_frame(dsts, src, ovi.format.numPlanes, api);
+        return dst;
+    } catch (const AvisynthError& e) {
+        api->freeFrame(dst);
+        api->setFilterError((std::string("AviSynth: ") + e.msg).c_str(), frameCtx);
+    } catch (const std::string& e) {
+        api->freeFrame(dst);
+        api->setFilterError((std::string("AviSynth: ") + e).c_str(), frameCtx);
+    } catch (...) {
+        api->freeFrame(dst);
+        api->setFilterError("AviSynth: unknown frame error", frameCtx);
+    }
+    return nullptr;
 }
 
 // Frees an AvsReaderOutput and its shared reader when the last output dies.

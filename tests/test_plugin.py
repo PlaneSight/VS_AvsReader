@@ -1,17 +1,15 @@
 """
 Comprehensive test suite for VS_AvsReader exercising the AviSynth+
 built-in filter library through VapourSynth.
-
-Some AviSynth+ stdlib paths are omitted for now because they terminate
-Python when exercised in-process through the macOS Homebrew runtime.
-That is observed behavior, not proof that those filters call abort()
-directly; enable them only after isolating the crash or running them in
-subprocess-based tests.
 """
+
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import vapoursynth as vs
 import pytest
-from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parent.parent / "build" / "vsavsreader.dylib"
 AVSI = Path(__file__).resolve().parent.parent / "avsi"
@@ -34,6 +32,28 @@ def clip(c, script):
 
 def multi(c, script):
     return c.avsr.Eval(lines=script)
+
+
+def run_isolated(script, *, frame=True):
+    code = f"""
+import vapoursynth as vs
+core = vs.core
+core.std.LoadPlugin({str(PLUGIN)!r})
+try:
+    r = core.avsr.Eval(lines={script!r})
+    if isinstance(r, list):
+        r = r[0]
+    if {frame!r}:
+        r.get_frame(0)
+except vs.Error:
+    pass
+"""
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(code)],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 YV12  = 'pixel_type="YV12"'
@@ -366,3 +386,12 @@ class TestRobustness:
     def test_zero_length_eval(self, core):
         with pytest.raises(vs.Error):
             core.avsr.Eval(lines="  ")
+
+    @pytest.mark.parametrize("script", [
+        f'BlankClip(length=10, width=64, height=64, {YV12})\nPeculiarBlend()',
+        f'BlankClip(length=10, width=64, height=64, {YV12})\nFixBrokenChromaUpsampling()',
+        'ShowFiveVersions()',
+    ])
+    def test_avisynth_errors_do_not_abort(self, script):
+        p = run_isolated(script)
+        assert p.returncode == 0, p.stderr

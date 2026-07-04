@@ -309,6 +309,11 @@ AvsReader* AvsReader::createPosix(const char* input, int bit_depth,
         env->DeleteScriptEnvironment();
         dlclose(dll);
         throw msg;
+    } catch (...) {
+        AVS_linkage = nullptr;
+        if (env) env->DeleteScriptEnvironment();
+        if (dll) dlclose(dll);
+        throw std::string("uncaught AviSynth exception");
     }
     return nullptr;
 }
