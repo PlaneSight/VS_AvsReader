@@ -1,0 +1,13 @@
+[project]
+name = "tests"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.14"
+dependencies = [
+    "vapoursynth>=77",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
