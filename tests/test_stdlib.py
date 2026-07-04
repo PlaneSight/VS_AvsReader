@@ -395,3 +395,229 @@ class TestRobustness:
     def test_avisynth_errors_do_not_abort(self, script):
         p = run_isolated(script)
         assert p.returncode == 0, p.stderr
+
+
+# -- Overlays & text ----------------------------------------------------
+
+class TestOverlays:
+    src = f'BlankClip(length=10, width=64, height=48, {YV12})'
+
+    def test_subtitle(self, core):
+        c = clip(core, self.src + '\nSubtitle("test")')
+        assert c.width == 64
+
+    def test_showframenumber(self, core):
+        c = clip(core, self.src + '\nShowFrameNumber()')
+        assert c.width == 64
+
+    def test_showsmpte(self, core):
+        c = clip(core, self.src + '\nShowSMPTE()')
+        assert c.width == 64
+
+    def test_showtime(self, core):
+        c = clip(core, self.src + '\nShowTime()')
+        assert c.width == 64
+
+    def test_histogram_classic(self, core):
+        c = clip(core, self.src + '\nHistogram("classic")')
+        assert c.width >= 64  # histogram mode widens the clip
+
+    def test_histogram_levels(self, core):
+        c = clip(core, self.src + '\nHistogram("levels")')
+        assert c.width >= 64
+
+
+# -- Plane manipulation ------------------------------------------------
+
+class TestPlanes:
+    src_yv12  = f'BlankClip(width=64, height=48, {YV12})'
+    src_y8_a  = f'BlankClip(width=32, height=48, {Y8})'
+    src_y8_b  = f'BlankClip(width=32, height=48, {Y8})'
+    src_rgb   = f'BlankClip(width=64, height=48, {RGB24})'
+
+    def test_greyscale(self, core):
+        c = clip(core, self.src_yv12 + '\nGreyScale()')
+        assert c.format.id == vs.YUV420P8
+
+    def test_swapuv(self, core):
+        c = clip(core, self.src_yv12 + '\nSwapUV()')
+        assert c.format.id == vs.YUV420P8
+
+    def test_utoy(self, core):
+        c = clip(core, self.src_yv12 + '\nUToY()')
+        assert c.width == 32  # subsampled: YV12 U plane is half-width
+
+    def test_vtoy(self, core):
+        c = clip(core, self.src_yv12 + '\nVToY()')
+        assert c.width == 32
+
+    def test_ytouv(self, core):
+        c = clip(core, self.src_y8_a + '\nYToUV(' + self.src_y8_b + ', last)')
+        assert c.format.color_family == vs.YUV
+
+    def test_mergechroma(self, core):
+        src2 = f'BlankClip(width=64, height=48, {YV12}, color=$808080)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nMergeChroma(a, b)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_mergeluma(self, core):
+        src2 = f'BlankClip(width=64, height=48, {Y8})'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nMergeLuma(a, b)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_show_red_green_blue(self, core):
+        for ch in ("Red", "Green", "Blue"):
+            c = clip(core, self.src_rgb + f'\nShow{ch}("YV12")')
+            assert c.format.color_family == vs.YUV
+
+
+# -- Merge / compositing -----------------------------------------------
+
+class TestMerge:
+    src_yv12  = f'BlankClip(width=64, height=48, {YV12})'
+    src_rgb24 = f'BlankClip(width=64, height=48, {RGB24})'
+
+    def test_merge(self, core):
+        src2 = f'BlankClip(width=64, height=48, {YV12}, color=$FFFFFF)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nMerge(a, b, 0.5)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_merge_rgb(self, core):
+        src2 = f'BlankClip(width=64, height=48, {RGB24}, color=$FFFFFF)'
+        c = clip(core, 'a=' + self.src_rgb24 + '\nb=' + src2 + '\nMergeRGB(a, b, a)')
+        assert c.format.color_family == vs.RGB
+
+    def test_overlay(self, core):
+        src2 = f'BlankClip(width=32, height=24, {YV12}, color=$FFFFFF)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nOverlay(a, b, x=16, y=12)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_layer(self, core):
+        src2 = f'BlankClip(width=64, height=48, {RGB24}, color=$808080)'
+        c = clip(core, 'a=' + self.src_rgb24 + '\nb=' + src2 + '\nLayer(a, b, "add", 128)')
+        assert c.format.color_family == vs.RGB
+
+
+# -- Transforms --------------------------------------------------------
+
+class TestTransforms:
+    src_yv12  = f'BlankClip(width=64, height=48, {YV12})'
+
+    def test_turn_left(self, core):
+        c = clip(core, self.src_yv12 + '\nTurnLeft()')
+        assert c.width == 48 and c.height == 64
+
+    def test_turn_right(self, core):
+        c = clip(core, self.src_yv12 + '\nTurnRight()')
+        assert c.width == 48 and c.height == 64
+
+    def test_turn180(self, core):
+        c = clip(core, self.src_yv12 + '\nTurn180()')
+        assert c.width == 64 and c.height == 48
+
+    def test_flip_horizontal(self, core):
+        c = clip(core, self.src_yv12 + '\nFlipHorizontal()')
+        assert c.width == 64
+
+    def test_flip_vertical(self, core):
+        c = clip(core, self.src_yv12 + '\nFlipVertical()')
+        assert c.height == 48
+
+
+# -- Stacking ----------------------------------------------------------
+
+class TestStacking:
+    src = f'BlankClip(width=16, height=16, {YV12})'
+
+    def test_stack_horizontal(self, core):
+        c = clip(core, 'a=' + self.src + '\nb=' + self.src + '\nreturn StackHorizontal(a, b)')
+        assert c.width == 32 and c.height == 16
+
+    def test_stack_vertical(self, core):
+        c = clip(core, 'a=' + self.src + '\nb=' + self.src + '\nreturn StackVertical(a, b)')
+        assert c.width == 16 and c.height == 32
+
+
+# -- Additional colour filters -----------------------------------------
+
+class TestColourFilters:
+    src_yv12 = f'BlankClip(width=64, height=48, {YV12})'
+    src_rgb  = f'BlankClip(width=64, height=48, {RGB24})'
+
+    def test_invert(self, core):
+        c = clip(core, self.src_yv12 + '\nInvert()')
+        assert c.format.id == vs.YUV420P8
+
+    def test_tweak(self, core):
+        c = clip(core, self.src_yv12 + '\nTweak(sat=1.1, bright=5)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_limiter(self, core):
+        c = clip(core, self.src_yv12 + '\nLimiter(16, 235, 16, 240)')
+        assert c.format.id == vs.YUV420P8
+
+    def test_rgbadjust_all_channels(self, core):
+        c = clip(core, self.src_rgb + '\nRGBAdjust(1.1, 0.9, 1.0, 1.0)')
+        assert c.format.color_family == vs.RGB
+
+    def test_coloryuv_cont(self, core):
+        c = clip(core, self.src_yv12 + '\nColorYUV(cont_u=10, cont_v=-10)')
+        assert c.format.id == vs.YUV420P8
+
+
+# -- Field/frame mode --------------------------------------------------
+
+class TestFieldMode:
+    src = f'BlankClip(length=10, width=64, height=48, {YV12})'
+
+    def test_assume_field_based(self, core):
+        c = clip(core, self.src + '\nAssumeFieldBased()')
+        assert c.width == 64
+
+    def test_assume_frame_based(self, core):
+        c = clip(core, self.src + '\nAssumeFrameBased()')
+        assert c.width == 64
+
+    def test_bob(self, core):
+        c = clip(core, self.src + '\nAssumeTFF()\nBob()')
+        assert c.height == 48
+
+    def test_assume_bff(self, core):
+        c = clip(core, self.src + '\nAssumeBFF()\nComplementParity()')
+        assert c.width == 64
+
+
+# -- Misc filters ------------------------------------------------------
+
+class TestMiscFilters:
+    src_yv12 = f'BlankClip(length=1, width=64, height=48, {YV12})'
+
+    def test_compare(self, core):
+        src2 = f'BlankClip(length=1, width=64, height=48, {YV12}, color=$808080)'
+        c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nCompare(a, b)')
+        assert c.width == 64
+
+    def test_general_convolution(self, core):
+        c = clip(core, f'BlankClip(width=64, height=48, {RGB24})\n'
+                 'GeneralConvolution(bias=0, matrix="-1 -1 -1 -1 9 -1 -1 -1 -1")')
+        assert c.format.color_family == vs.RGB
+
+    def test_conditional_filter(self, core):
+        c = clip(core,
+            'a=' + self.src_yv12 + '\n'
+            'b=BlankClip(length=1, width=64, height=48, ' + YV12 + ', color=$808080)\n'
+            'ConditionalFilter(a, b, a, "AverageLuma()", ">", "0")')
+        assert c.width == 64
+
+    @pytest.mark.parametrize("fmt_str,fmt_id", [
+        ("RGB24", vs.RGB24),
+        ("YUY2", vs.YUV422P8),
+        ("YV12", vs.YUV420P8),
+        ("YV16", vs.YUV422P8),
+        ("YV24", vs.YUV444P8),
+        ("Y8", vs.GRAY8),
+    ])
+    def test_convert_to(self, core, fmt_str, fmt_id):
+        c = clip(core, self.src_yv12 + f'\nConvertTo{fmt_str}()')
+        assert c.format.id == fmt_id
+
