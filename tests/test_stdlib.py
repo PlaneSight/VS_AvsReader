@@ -449,6 +449,10 @@ class TestFrameProps:
         c = clip(core, self.src + '\nAssumeScaledFPS(60, 1)')
         assert c.width == 32
 
+    def test_assume_fps_explicit(self, core):
+        c = clip(core, self.src + '\nAssumeFPS(24000, 1001)')
+        assert c.fps_num == 24000 and c.fps_den == 1001
+
 
 class TestInterlacing:
     src = f'BlankClip(width=64, height=64, {YV12})'
@@ -500,7 +504,6 @@ class TestAudio:
     def test_convert_audio_float(self, core):
         c = clip(core, self.src + '\nConvertAudioToFloat()')
         assert c.width == 32
-
 
 class TestRobustness:
     def test_empty_script(self, core):
@@ -591,6 +594,10 @@ class TestOverlays:
         c = clip(core, self.src + '\nHistogram("levels")')
         assert c.width >= 64
 
+    def test_histogram_color(self, core):
+        c = clip(core, self.src + '\nHistogram("color")')
+        assert c.width >= 64
+
     def test_subtitle_position(self, core):
         c = clip(core, self.src + '\nSubtitle("pos", x=10, y=20)')
         assert c.width == 64
@@ -676,6 +683,13 @@ class TestMerge:
         c = clip(core, 'a=' + self.src_rgb24 + '\nb=' + src2 + '\nMergeRGB(a, b, a)')
         assert c.format.color_family == vs.RGB
 
+    def test_merge_rgb_distinct_channels(self, core):
+        red   = f'BlankClip(width=64, height=48, {RGB24}, color=$FF0000)'
+        green = f'BlankClip(width=64, height=48, {RGB24}, color=$00FF00)'
+        blue  = f'BlankClip(width=64, height=48, {RGB24}, color=$0000FF)'
+        c = clip(core, 'r=' + red + '\ng=' + green + '\nb=' + blue + '\nMergeRGB(r, g, b)')
+        assert c.format.color_family == vs.RGB
+
     def test_overlay(self, core):
         src2 = f'BlankClip(width=32, height=24, {YV12}, color=$FFFFFF)'
         c = clip(core, 'a=' + self.src_yv12 + '\nb=' + src2 + '\nOverlay(a, b, x=16, y=12)')
@@ -718,6 +732,7 @@ class TestCompositing:
 
 class TestTransforms:
     src_yv12  = f'BlankClip(width=64, height=48, {YV12})'
+    src_rgb   = f'BlankClip(width=48, height=64, {RGB24})'
 
     def test_turn_left(self, core):
         c = clip(core, self.src_yv12 + '\nTurnLeft()')
@@ -726,6 +741,14 @@ class TestTransforms:
     def test_turn_right(self, core):
         c = clip(core, self.src_yv12 + '\nTurnRight()')
         assert c.width == 48 and c.height == 64
+
+    def test_turn_left_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nTurnLeft()')
+        assert c.width == 64 and c.height == 48
+
+    def test_turn_right_rgb(self, core):
+        c = clip(core, self.src_rgb + '\nTurnRight()')
+        assert c.width == 64 and c.height == 48
 
     def test_turn180(self, core):
         c = clip(core, self.src_yv12 + '\nTurn180()')
@@ -842,6 +865,11 @@ class TestMiscFilters:
     def test_general_convolution(self, core):
         c = clip(core, f'BlankClip(width=64, height=48, {RGB24})\n'
                  'GeneralConvolution(bias=0, matrix="-1 -1 -1 -1 9 -1 -1 -1 -1")')
+        assert c.format.color_family == vs.RGB
+
+    def test_general_convolution_sharpen(self, core):
+        c = clip(core, f'BlankClip(width=64, height=48, {RGB24})\n'
+                 'GeneralConvolution(bias=0, matrix="0 -1 0 -1 5 -1 0 -1 0")')
         assert c.format.color_family == vs.RGB
 
     def test_conditional_filter(self, core):
