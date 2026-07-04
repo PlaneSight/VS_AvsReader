@@ -6,9 +6,13 @@ requires-python = ">=3.14"
 dependencies = [
     "polars",
     "vapoursynth>=77",
+    "vapoursynth-bestsource",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.uv.sources]
+vapoursynth-bestsource = { git = "https://github.com/vapoursynth/bestsource" }

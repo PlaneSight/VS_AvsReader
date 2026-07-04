@@ -98,6 +98,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "polars" },
     { name = "vapoursynth" },
+    { name = "vapoursynth-bestsource" },
 ]
 
 [package.dev-dependencies]
@@ -109,6 +110,7 @@ dev = [
 requires-dist = [
     { name = "polars" },
     { name = "vapoursynth", specifier = ">=77" },
+    { name = "vapoursynth-bestsource", git = "https://github.com/vapoursynth/bestsource" },
 ]
 
 [package.metadata.requires-dev]
@@ -127,4 +129,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/02/e3/c5401dfb5afc4cd8b49a1b79ee0c3b055da451f552af19e902678264174a/vapoursynth-77-cp312-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:016bdb80806de57b8e73a1ba278f8563157d664ba02a5769c615ee7c02ccb73b", size = 2166156, upload-time = "2026-06-16T06:37:01.888Z" },
     { url = "https://files.pythonhosted.org/packages/92/46/2c39070b83ae729dc5d02afe6f1f314bbe6165d8a85efaaa8e4dc9e5a37c/vapoursynth-77-cp312-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7fce3de91f7575ac1f0c1ef2485b546495f0235b10d2065d7592b8cf0ca29dd8", size = 2839782, upload-time = "2026-06-16T06:37:03.511Z" },
     { url = "https://files.pythonhosted.org/packages/65/90/249eebf18d54998bb71929c9130a0d3f8130f47e250fa0d70e0cc406c3aa/vapoursynth-77-cp312-abi3-win_amd64.whl", hash = "sha256:443b0a9c3481ba23331e21dcb3605375f08e7190b943606b4bc9f9f67efeceba", size = 5951710, upload-time = "2026-06-16T06:37:05.381Z" },
+]
+
+[[package]]
+name = "vapoursynth-bestsource"
+version = "18.0"
+source = { git = "https://github.com/vapoursynth/bestsource#586abe3636564b3e6eaad4b7f89fa250a7222b39" }
+dependencies = [
+    { name = "vapoursynth" },
 ]
