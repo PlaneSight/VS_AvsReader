@@ -5,6 +5,14 @@ pub const ScriptEnvironment = opaque {};
 pub const Clip = opaque {};
 pub const VideoFrame = opaque {};
 
+// AviSynth plane constants are bitmasks, not sequential indices.
+// avisynth_c.h: AVS_DEFAULT_PLANE=0, AVS_PLANAR_Y=1, AVS_PLANAR_U=2, AVS_PLANAR_V=4
+pub const Plane = struct {
+    pub const Y: c_int = 0; // AVS_DEFAULT_PLANE
+    pub const U: c_int = 2; // AVS_PLANAR_U (1 << 1)
+    pub const V: c_int = 4; // AVS_PLANAR_V (1 << 2)
+};
+
 // Layout-identical to AVS_VideoInfo in avisynth_c.h
 pub const VideoInfo = extern struct {
     width: c_int,
@@ -76,11 +84,21 @@ extern fn avs_invoke(env: ?*ScriptEnvironment, name: [*c]const u8, args: AVS_Val
 extern fn avs_take_clip(v: AVS_Value, env: ?*ScriptEnvironment) ?*Clip;
 extern fn avs_get_video_info(clip: ?*Clip) ?*const VideoInfo;
 
+// AVS_Value type testers (inline in C header, reimplemented here).
+// Type codes: 'c'=clip, 'e'=error, 'v'=void, 's'=string, etc.
+fn avsIsClip(v: AVS_Value) bool { return v.type == 'c'; }
+fn avsIsError(v: AVS_Value) bool { return v.type == 'e'; }
+fn avsAsString(v: AVS_Value) ?[*:0]const u8 {
+    if (v.type != 's') return null;
+    return @ptrCast(v.d.string);
+}
+
 extern fn avs_get_frame(clip: ?*Clip, n: c_int) ?*VideoFrame;
-extern fn avs_get_read_ptr_p(env: ?*ScriptEnvironment, frame: ?*const VideoFrame, plane: c_int) ?[*]const u8;
-extern fn avs_get_pitch_p(env: ?*ScriptEnvironment, frame: ?*const VideoFrame, plane: c_int) c_int;
-extern fn avs_get_row_size_p(env: ?*ScriptEnvironment, frame: ?*const VideoFrame, plane: c_int) c_int;
-extern fn avs_get_height_p(env: ?*ScriptEnvironment, frame: ?*const VideoFrame, plane: c_int) c_int;
+extern fn avs_release_video_frame(frame: ?*VideoFrame) void;
+extern fn avs_get_read_ptr_p(frame: ?*const VideoFrame, plane: c_int) ?[*]const u8;
+extern fn avs_get_pitch_p(frame: ?*const VideoFrame, plane: c_int) c_int;
+extern fn avs_get_row_size_p(frame: ?*const VideoFrame, plane: c_int) c_int;
+extern fn avs_get_height_p(frame: ?*const VideoFrame, plane: c_int) c_int;
 
 extern fn avs_bits_per_component(vi: ?*const VideoInfo) c_int;
 extern fn avs_is_planar_rgb(vi: ?*const VideoInfo) c_int;
@@ -108,6 +126,10 @@ pub const Env = struct {
         const result = avs_invoke(env, "Eval", args, null);
         defer avs_release_value(result);
 
+        // avs_take_clip on a non-clip value (error/void) crashes; check first.
+        if (avsIsError(result)) return error.EvalError;
+        if (!avsIsClip(result)) return error.NotAClip;
+
         const clip = avs_take_clip(result, env) orelse return error.NotAClip;
         const vi_ptr = avs_get_video_info(clip) orelse return error.NoVideo;
         if (vi_ptr.width == 0) return error.NoVideo;
@@ -123,20 +145,29 @@ pub const Env = struct {
         return avs_get_frame(self.clip, n);
     }
 
+    pub fn releaseFrame(self: *const Env, frame: ?*VideoFrame) void {
+        _ = self;
+        avs_release_video_frame(frame);
+    }
+
     pub fn getReadPtr(self: *const Env, frame: *const VideoFrame, plane: c_int) ?[*]const u8 {
-        return avs_get_read_ptr_p(self.raw, frame, plane);
+        _ = self;
+        return avs_get_read_ptr_p(frame, plane);
     }
 
     pub fn getPitch(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        return avs_get_pitch_p(self.raw, frame, plane);
+        _ = self;
+        return avs_get_pitch_p(frame, plane);
     }
 
     pub fn getRowSize(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        return avs_get_row_size_p(self.raw, frame, plane);
+        _ = self;
+        return avs_get_row_size_p(frame, plane);
     }
 
     pub fn getHeight(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        return avs_get_height_p(self.raw, frame, plane);
+        _ = self;
+        return avs_get_height_p(frame, plane);
     }
 
     pub fn colorFamily(self: *const Env) enum { Gray, RGB, YUV } {

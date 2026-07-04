@@ -59,12 +59,17 @@ fn avsrFree(
 
 fn writeYUV(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
     const frame = reader.avs_env.getFrame(n) orelse return;
+    defer reader.avs_env.releaseFrame(frame);
+    // AviSynth plane constants are bitmasks (Y=0, U=2, V=4), not 0,1,2.
+    // VapourSynth planes are sequential: 0=Y, 1=U, 2=V.
+    const avs_planes = [_]c_int{ avs.Plane.Y, avs.Plane.U, avs.Plane.V };
     var p: u32 = 0;
     while (p < 3) : (p += 1) {
-        const src = reader.avs_env.getReadPtr(frame, @intCast(p)) orelse break;
-        const sp = reader.avs_env.getPitch(frame, @intCast(p));
-        const rs = reader.avs_env.getRowSize(frame, @intCast(p));
-        const h = reader.avs_env.getHeight(frame, @intCast(p));
+        const ap = avs_planes[p];
+        const src = reader.avs_env.getReadPtr(frame, ap) orelse break;
+        const sp = reader.avs_env.getPitch(frame, ap);
+        const rs = reader.avs_env.getRowSize(frame, ap);
+        const h = reader.avs_env.getHeight(frame, ap);
         const dp = zapi.getWritePtr(dst, @intCast(p));
         const ds = zapi.getStride(dst, @intCast(p));
 
@@ -89,6 +94,7 @@ fn writeRGB32(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const Z
 // sy walks source rows h-1→0, dy walks dest rows 0→h-1.
 fn writeRGB(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI, channels: i32) void {
     const frame = reader.avs_env.getFrame(n) orelse return;
+    defer reader.avs_env.releaseFrame(frame);
     const src = reader.avs_env.getReadPtr(frame, 0) orelse return;
     const sp = reader.avs_env.getPitch(frame, 0);
     const rb = reader.avs_env.getRowSize(frame, 0);
@@ -117,6 +123,7 @@ fn writeRGB(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAP
 
 fn writeGray(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
     const frame = reader.avs_env.getFrame(n) orelse return;
+    defer reader.avs_env.releaseFrame(frame);
     const src = reader.avs_env.getReadPtr(frame, 0) orelse return;
     const sp = reader.avs_env.getPitch(frame, 0);
     const rs = reader.avs_env.getRowSize(frame, 0);
