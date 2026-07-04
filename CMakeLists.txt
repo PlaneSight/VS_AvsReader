@@ -50,15 +50,15 @@ endif()
 
 # ── Sources ─────────────────────────────────────────────────────────
 set(SOURCES
-    AvsReader.cpp
-    plugin.cpp
+    src/AvsReader.cpp
+    src/plugin.cpp
 )
 
 # ── Shared library ──────────────────────────────────────────────────
 add_library(vsavsreader SHARED ${SOURCES})
 
 target_include_directories(vsavsreader PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}           # for "AvsReader.h", "myvshelper.h"
+    ${CMAKE_CURRENT_SOURCE_DIR}/src           # for "AvsReader.h", "myvshelper.h"
     ${VAPOURSYNTH_VENDOR_DIR}             # vendored VapourSynth4.h
     ${AVISYNTH_VENDOR_DIR}                # vendored avisynth.h + avs/*.h
     ${VAPOURSYNTH_INCLUDE_DIRS}           # system fallback (if any)
