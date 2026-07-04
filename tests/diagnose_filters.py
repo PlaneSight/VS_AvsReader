@@ -1,9 +1,10 @@
 """Compare avsr plugin output vs native VapourSynth for many filters.
-Prints per-plane min/max/avg and the max abs diff between AviSynth and VS.
+Collects per-plane min/max/avg and max abs diff in a Polars DataFrame.
 """
 
 from pathlib import Path
 
+import polars as pl
 import vapoursynth as vs
 
 _ROOT = Path(__file__).parent.parent
@@ -42,10 +43,6 @@ def max_diff(clip_a, clip_b):
     return md
 
 
-def fmt_stats(s):
-    return f"min={s[0]:.0f} max={s[1]:.0f} avg={s[2]:.1f}"
-
-
 # Source: use ColorBars for visually interesting content
 SRC_AVS = f'ColorBars(width={W}, height={H}, pixel_type="YV12")\nTrim(0, {N-1})\n'
 src = core.avsr.Eval(lines=SRC_AVS)
@@ -59,11 +56,14 @@ vs_src = src
 
 print(f"Source: AviSynth ColorBars {W}x{H} YUV420P8")
 s = plane_stats("src", src)
-print(f"  Y: {fmt_stats(s[0])}  U: {fmt_stats(s[1])}  V: {fmt_stats(s[2])}")
+print(f"  Y: min={s[0][0]:.0f} max={s[0][1]:.0f} avg={s[0][2]:.1f}  "
+      f"U: min={s[1][0]:.0f} max={s[1][1]:.0f} avg={s[1][2]:.1f}  "
+      f"V: min={s[2][0]:.0f} max={s[2][1]:.0f} avg={s[2][2]:.1f}")
 print()
 
 # Each test: (name, avs_lines_after_source, vs_filter_fn)
 tests = []
+
 
 def t(name, avs_extra, vs_fn):
     tests.append((name, avs_extra, vs_fn))
@@ -191,8 +191,10 @@ t("ex_inpand",
   lambda c: core.std.Minimum(c, planes=0))
 
 
-print(f"{'Filter':<28} {'AviSynth Y (min/max/avg)':<26} {'VS Y (min/max/avg)':<26} {'MaxDiff':>8}")
-print("-" * 92)
+# ---------------------------------------------------------------------------
+# Collect all test results as dicts, then build DataFrames
+# ---------------------------------------------------------------------------
+results = []
 
 for name, avs_extra, vs_fn in tests:
     try:
@@ -219,8 +221,59 @@ for name, avs_extra, vs_fn in tests:
 
     if same_dims:
         md = max_diff(avs_clip, vs_clip)
-        md_str = f"{md:.0f}"
     else:
-        md_str = f"({avs_clip.width}x{avs_clip.height} vs {vs_clip.width}x{vs_clip.height})"
+        md = None  # dimension mismatch — no pixel diff possible
 
-    print(f"{name:<28} {fmt_stats(avs_s[0]):<26} {fmt_stats(vs_s[0]):<26} {md_str:>8}")
+    results.append({
+        "filter": name,
+        "avs_Y_min": avs_s[0][0],
+        "avs_Y_max": avs_s[0][1],
+        "avs_Y_avg": avs_s[0][2],
+        "avs_U_min": avs_s[1][0],
+        "avs_U_max": avs_s[1][1],
+        "avs_U_avg": avs_s[1][2],
+        "avs_V_min": avs_s[2][0],
+        "avs_V_max": avs_s[2][1],
+        "avs_V_avg": avs_s[2][2],
+        "vs_Y_min": vs_s[0][0],
+        "vs_Y_max": vs_s[0][1],
+        "vs_Y_avg": vs_s[0][2],
+        "vs_U_min": vs_s[1][0],
+        "vs_U_max": vs_s[1][1],
+        "vs_U_avg": vs_s[1][2],
+        "vs_V_min": vs_s[2][0],
+        "vs_V_max": vs_s[2][1],
+        "vs_V_avg": vs_s[2][2],
+        "max_diff": md,
+    })
+
+if not results:
+    print("No results collected.")
+else:
+    df = pl.DataFrame(results)
+
+    print("=" * 40)
+    print("Full Results")
+    print("=" * 40)
+    print(df)
+
+    # -----------------------------------------------------------------------
+    # Summary
+    # -----------------------------------------------------------------------
+    exact = df.filter(pl.col("max_diff") == 0.0)
+    with_diff = df.filter(pl.col("max_diff") > 0.0)
+    no_diff = df.filter(pl.col("max_diff").is_null())
+
+    print()
+    print("=" * 40)
+    print("Summary")
+    print("=" * 40)
+    print(f"bit-exact (max_diff == 0): {len(exact)}")
+    if len(exact) > 0:
+        print(exact.select("filter"))
+    print(f"\nnon-bit-exact (max_diff > 0): {len(with_diff)}")
+    if len(with_diff) > 0:
+        print(with_diff.select("filter", "max_diff"))
+    print(f"\ndim mismatch (no diff computed): {len(no_diff)}")
+    if len(no_diff) > 0:
+        print(no_diff.select("filter"))

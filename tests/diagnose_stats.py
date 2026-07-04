@@ -1,11 +1,12 @@
 """Numeric diagnostic: print per-plane min/max/avg of each stage
 to pinpoint where the AviSynth-vs-VS divergence comes from.
-Uses std.PlaneStats for frame-level stats.
+Uses std.PlaneStats for frame-level stats. Output via Polars DataFrame.
 """
 
 from pathlib import Path
 import sys
 
+import polars as pl
 import vapoursynth as vs
 
 _ROOT = Path(__file__).parent.parent
@@ -17,11 +18,12 @@ W, H, NFRAMES = 320, 240, 1
 core = vs.core
 core.std.LoadPlugin(str(PLUGIN))
 
+rows = []
+
 
 def stats(label, clip):
     # PlaneStats gives overall min/max/avg. Extract each plane via
     # ShufflePlanes to get per-plane stats.
-    print(f"--- {label} ---", flush=True)
     for i, name in enumerate(["Y", "U", "V"]):
         plane = core.std.ShufflePlanes(clip, planes=i, colorfamily=vs.GRAY)
         ps = core.std.PlaneStats(plane)
@@ -30,7 +32,13 @@ def stats(label, clip):
         mn = float(p["PlaneStatsMin"])
         mx = float(p["PlaneStatsMax"])
         avg = float(p["PlaneStatsAverage"])
-        print(f"  {name}: min={mn:.1f} max={mx:.1f} avg={avg:.2f}", flush=True)
+        rows.append({
+            "label": label,
+            "plane": name,
+            "min": mn,
+            "max": mx,
+            "avg": avg,
+        })
 
 
 # Source: AviSynth ColorBars via avsr
@@ -100,3 +108,7 @@ stats("AviSynth raw Expr 255 x -", avs_raw_invert)
 diff_raw = core.std.Expr([port_invert, avs_raw_invert],
                          expr=["x y - abs", "", ""])
 stats("|port_invert - avs_raw_invert|", diff_raw)
+
+# Build and print DataFrame
+df = pl.DataFrame(rows)
+print(df)
