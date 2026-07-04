@@ -63,6 +63,9 @@ class AvsReader {
 #ifdef _WIN32
     HMODULE dll;
 #endif
+#ifdef _POSIX
+    void* dll;
+#endif
     ise_t* env;
     PClip clip;
 
@@ -114,7 +117,13 @@ public:
                                    bool alpha, const char* mode,
                                    VSCore* core, const VSAPI* api);
 #endif
-    // Portable factory stub for non-Windows builds.
+#ifdef _POSIX
+    // POSIX factory: dlopen libavisynth.dylib/.so at runtime, same flow.
+    static AvsReader* createPosix(const char* input, int bit_depth,
+                                   bool alpha, const char* mode,
+                                   VSCore* core, const VSAPI* api);
+#endif
+    // Portable factory stub for builds without AviSynth+ available.
     static AvsReader* create(const char* input, int bit_depth,
                               bool alpha, const char* mode,
                               VSCore* core, const VSAPI* api);

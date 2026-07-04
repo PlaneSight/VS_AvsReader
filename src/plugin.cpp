@@ -117,6 +117,9 @@ create_avsr(const VSMap* in, VSMap* out, void* userData,
 #ifdef _WIN32
         AvsReader* reader = AvsReader::createWin32(
             input, bd, alpha, mode, core, api);
+#elif defined(_POSIX) && defined(HAVE_AVISYNTH)
+        AvsReader* reader = AvsReader::createPosix(
+            input, bd, alpha, mode, core, api);
 #else
         AvsReader* reader = AvsReader::create(
             input, bd, alpha, mode, core, api);

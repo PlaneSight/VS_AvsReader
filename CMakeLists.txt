@@ -54,43 +54,56 @@ set(SOURCES
     src/plugin.cpp
 )
 
+# ── AviSynth+ runtime link (macOS/Linux) ────────────────────────────
+# On Windows the plugin loads avisynth.dll dynamically via LoadLibrary.
+# On macOS/Linux we dlopen() libavisynth at runtime, but we can also
+# detect the system install so the build knows AviSynth+ is available.
+if(PkgConfig_FOUND)
+    pkg_check_modules(AVISYNTH_PC avisynth)
+endif()
+
 # ── Shared library ──────────────────────────────────────────────────
 add_library(vsavsreader SHARED ${SOURCES})
 
 target_include_directories(vsavsreader PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src           # for "AvsReader.h", "myvshelper.h"
     ${VAPOURSYNTH_VENDOR_DIR}             # vendored VapourSynth4.h
-    ${AVISYNTH_VENDOR_DIR}                # vendored avisynth.h + avs/*.h
+    ${AVISYNTH_PC_INCLUDE_DIRS}           # system AviSynth+ headers (match runtime)
+    ${AVISYNTH_VENDOR_DIR}                # vendored fallback avisynth.h + avs/*.h
     ${VAPOURSYNTH_INCLUDE_DIRS}           # system fallback (if any)
 )
 
 if(WIN32)
-    # Windows: link avisynth library at runtime via LoadLibrary,
-    # no static link needed.  Link VapourSynth import lib.
+    target_compile_definitions(vsavsreader PRIVATE _WIN32)
     if(VAPOURSYNTH_LIBRARY_DIR)
         find_library(VAPOURSYNTH_LIB vapoursynth HINTS ${VAPOURSYNTH_LIBRARY_DIR})
         if(VAPOURSYNTH_LIB)
             target_link_libraries(vsavsreader PRIVATE ${VAPOURSYNTH_LIB})
         endif()
     endif()
-    target_compile_definitions(vsavsreader PRIVATE _WIN32)
-elseif(APPLE)
-    target_link_libraries(vsavsreader PRIVATE
-        ${VAPOURSYNTH_LIBRARIES}
-        "-framework CoreFoundation"
-    )
-    set_target_properties(vsavsreader PROPERTIES
-        SUFFIX ".dylib"
-        PREFIX ""
-        INSTALL_RPATH "@loader_path;${VAPOURSYNTH_LIBRARY_DIRS}"
-    )
 else()
-    target_link_libraries(vsavsreader PRIVATE ${VAPOURSYNTH_LIBRARIES})
-    set_target_properties(vsavsreader PROPERTIES
-        SUFFIX ".so"
-        PREFIX ""
-        INSTALL_RPATH "$ORIGIN;${VAPOURSYNTH_LIBRARY_DIRS}"
-    )
+    target_compile_definitions(vsavsreader PRIVATE _POSIX)
+    if(AVISYNTH_PC_FOUND)
+        target_compile_definitions(vsavsreader PRIVATE
+            HAVE_AVISYNTH=1
+            AVISYNTH_LIB_DIR="${AVISYNTH_PC_LIBRARY_DIRS}")
+        target_include_directories(vsavsreader PRIVATE ${AVISYNTH_PC_INCLUDE_DIRS})
+        set_target_properties(vsavsreader PROPERTIES
+            INSTALL_RPATH "${AVISYNTH_PC_LIBRARY_DIRS};$ORIGIN")
+    endif()
+    if(APPLE)
+        target_link_libraries(vsavsreader PRIVATE
+            ${VAPOURSYNTH_LIBRARIES}
+            "-framework CoreFoundation")
+        set_target_properties(vsavsreader PROPERTIES
+            SUFFIX ".dylib" PREFIX ""
+            INSTALL_RPATH "@loader_path;${VAPOURSYNTH_LIBRARY_DIRS}")
+    else()
+        target_link_libraries(vsavsreader PRIVATE ${VAPOURSYNTH_LIBRARIES})
+        set_target_properties(vsavsreader PROPERTIES
+            SUFFIX ".so" PREFIX ""
+            INSTALL_RPATH "$ORIGIN;${VAPOURSYNTH_LIBRARY_DIRS}")
+    endif()
 endif()
 
 set_target_properties(vsavsreader PROPERTIES

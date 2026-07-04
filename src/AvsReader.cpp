@@ -28,6 +28,9 @@
 #include <vector>
 #include "AvsReader.h"
 #include "myvshelper.h"
+#ifdef _POSIX
+#include <dlfcn.h>
+#endif
 
 const AVS_Linkage* AVS_linkage = nullptr;
 
@@ -165,6 +168,9 @@ AvsReader::AvsReader(ise_t* e, PClip c, int n, int bit_depth,
 #ifdef _WIN32
     dll = nullptr;
 #endif
+#ifdef _POSIX
+    dll = nullptr;
+#endif
     viAVS = clip->GetVideoInfo();
 
     VSVideoFormat fmt{};
@@ -198,6 +204,12 @@ AvsReader::~AvsReader()
         dll = nullptr;
     }
 #endif
+#ifdef _POSIX
+    if (dll) {
+        dlclose(dll);
+        dll = nullptr;
+    }
+#endif
 }
 
 const VSFrame* VS_CC AvsReader::getFrame(int n, VSFrameContext* ctx,
@@ -224,6 +236,83 @@ PVideoFrame AvsReader::getAvisynthFrame(int n)
     n = std::min(std::max(n, 0), viAVS.num_frames - 1);
     return clip->GetFrame(n, env);
 }
+
+// POSIX factory: dlopen libavisynth at runtime.
+#ifdef _POSIX
+AvsReader* AvsReader::createPosix(const char* input, int bit_depth,
+                                   bool alpha, const char* mode,
+                                   VSCore* core, const VSAPI* api)
+{
+    typedef ise_t* (*cse_t)(int);
+
+    void* dll = nullptr;
+    ise_t* env = nullptr;
+    std::string libPath;
+
+    try {
+#ifdef __APPLE__
+        libPath = "libavisynth.dylib";
+#else
+        libPath = "libavisynth.so";
+#endif
+
+#ifdef AVISYNTH_LIB_DIR
+        {
+            std::string fullPath = std::string(AVISYNTH_LIB_DIR) + "/" + libPath;
+            dll = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+        }
+#endif
+        if (!dll)
+            dll = dlopen(libPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+
+        if (!dll)
+            validate(true, ("failed to load libavisynth: " + std::string(dlerror())).c_str());
+
+        auto* create_env = reinterpret_cast<cse_t>(
+            dlsym(dll, "CreateScriptEnvironment"));
+        if (!create_env)
+            validate(true, ("failed to find CreateScriptEnvironment: " +
+                     std::string(dlerror())).c_str());
+
+        env = create_env(AVISYNTH_INTERFACE_VERSION);
+        validate(!env, "failed to create avisynth script environment.");
+        AVS_linkage = env->GetAVSLinkage();
+
+        // On POSIX, AviSynth+ paths are UTF-8 native; no ANSI conversion.
+        AVSValue res = env->Invoke(mode, AVSValue(input));
+        validate(!res.IsClip(), "failed to evaluate avs clip.");
+
+        PClip clip = res.AsClip();
+        const VideoInfo& vi = clip->GetVideoInfo();
+        validate(!vi.HasVideo(), "avs clip has no video.");
+
+        if (bit_depth > 8)
+            validate(!vi.IsPlanar() || vi.IsYV411() || (vi.width & 1)
+                     || (vi.IsY8() && bit_depth != 16)
+                     || ((vi.IsYV16() || vi.IsYV12()) && (vi.width & 3)),
+                     "invalid bitdepth or resolution");
+
+        if (vi.IsYUY2())
+            clip = env->Invoke("ConvertToYV16", clip).AsClip();
+
+        int outputs = vi.IsRGB32() && alpha ? 2 : 1;
+        return new AvsReader(env, clip, outputs, bit_depth, core, api);
+
+    } catch (std::string&) {
+        AVS_linkage = nullptr;
+        if (env) env->DeleteScriptEnvironment();
+        if (dll) dlclose(dll);
+        throw;
+    } catch (AvisynthError e) {
+        auto msg = std::string(e.msg);
+        AVS_linkage = nullptr;
+        env->DeleteScriptEnvironment();
+        dlclose(dll);
+        throw msg;
+    }
+    return nullptr;
+}
+#endif
 
 // Portable factory. Requires AviSynth+ to be linked externally.
 AvsReader* AvsReader::create(const char* input, int bit_depth,
