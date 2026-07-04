@@ -1,70 +1,78 @@
-# Known Bugs — avsr + AviSynth ImageSource
+# Known Limitations — avsr + AviSynth+ stdlib
 
-Filters that crash the AviSynth environment when applied to clips
-derived from `ImageSource` (GIF/PNG/JPEG sources loaded through AviSynth+).
+Filters that reject certain input formats in the AviSynth+ build bundled
+with avsr on macOS.
 
-Source: `ImageSource("path/to/image.gif", fps=24, end=N)`
-Tested on: AviSynth+ bundled with avsr (macOS), GIF 670×589
+Tested on: AviSynth+ 3.7.5 via avsr
 
 ---
 
-## Crashes
+## YUV-Only Filters Reject RGB Input
 
-| Filter | Test | Works on BlankClip? |
-|---|---|---|
-| `ConvertToYV12(clip)` | any ImageSource clip | yes |
-| `ConvertToYV24(clip)` | any ImageSource clip | yes |
-| `ConvertToYUY2(clip)` | any ImageSource clip | yes |
-| `Tweak(...)` — any params | any ImageSource clip | yes |
-| `ColorYUV(...)` — any params | any ImageSource clip | yes |
-| `Limiter(...)` — any params | any ImageSource clip | yes |
+`Tweak`, `ColorYUV`, and `Limiter` do not auto-convert RGB input to YUV.
+They return a script error when applied to RGB clips.
 
-Error: `avsr: failed to create AviSynth environment`
+| Filter | Error Message |
+|---|---|
+| `Tweak(sat=1.0)` on RGB | `Tweak: YUV data only (no RGB)` |
+| `ColorYUV(gain_y=10)` on RGB | `ColorYUV: Only work with YUV colorspace.` |
+| `Limiter()` on RGB | `Limiter: Source must be YUV or YUVA` |
 
-## Works
+This affects ANY RGB source (ImageSource, BlankClip(RGB24), Blackness, etc.).
+
+### What works on RGB input
 
 | Filter | Notes |
 |---|---|
-| `ConvertToRGB24()` | explicit conversion before further processing |
-| `RGBAdjust(r,g,b,a)` | works in RGB24 |
-| `Levels(...)` | works on any format |
-| `GeneralConvolution(...)` | works on any format |
-| `Layer(...)` | works on RGB24 |
-| `BilinearResize(...)` | works (stays in source colorspace) |
+| `ConvertToYV12()` | Explicit YUV conversion works on RGB |
+| `ConvertToYV16()` | works |
+| `ConvertToYV24()` | works |
+| `ConvertToYUY2()` | works |
+| `ConvertToY8()` | works |
+| `ConvertToRGB24()` | works |
+| `ConvertToRGB32()` | works |
+| `RGBAdjust(r,g,b,a)` | works |
+| `Levels(...)` | works |
+| `GeneralConvolution(...)` | works |
+| `BilinearResize(...)` | works |
 | `Subtitle(...)` | works |
 | `Info()` | works |
 | `Crop(...)` | works |
-| `BlankClip()` | works as a mixer |
 
-## Workaround
-
-Stay in **RGB24** space throughout the chain:
+### Workaround A: Convert to YUV first
 
 ```avisynth
-ImageSource("file.gif", fps=24, end=N)
-ConvertToRGB24()
-RGBAdjust(1.2, 1.0, 1.0, 1.0)   # instead of Tweak(sat=1.15)
-GeneralConvolution(0, "...")      # sharpening works on any format
-Layer(last_orig, last, "add", 77) # compositing works
-Levels(16, 1.0, 235, 16, 235)     # instead of Limiter(16,235,16,240)
+BlankClip(width=64, height=64, pixel_type="RGB24", length=1)
+ConvertToYV12()
+Tweak(sat=1.0)
+ColorYUV(gain_y=10)
+Limiter()
 ```
 
-Let VapourSynth handle the final RGB→YUV conversion:
+### Workaround B: Stay in RGB, use VS conversion
+
+Use RGB-native AviSynth filters, let VapourSynth handle YUV conversion:
+
+```avisynth
+BlankClip(width=64, height=64, pixel_type="RGB24", length=1)
+RGBAdjust(1.0, 1.0, 1.0, 1.0)
+Levels(0, 1, 255, 0, 255)
+```
 
 ```python
 clip = core.resize.Bicubic(avs_clip, format=vs.YUV420P8, matrix_s="709")
 ```
 
-## Hypothesis
+---
 
-Filters that internally convert between RGB and YUV (`Tweak`, `ColorYUV`,
-`ConvertToYV12`, `Limiter`) trigger a code path in AviSynth+ that crashes
-when the input clip was originally loaded via `ImageSource`. The crash happens
-during AviSynth environment creation, suggesting a static initialization
-or filter-chain compilation issue rather than a runtime frame-processing bug.
+## Error Reporting Fix (2026-07-05)
 
-Filters that operate purely in the current colorspace (`RGBAdjust`, `Levels`,
-`GeneralConvolution`, `Layer`) work correctly regardless of source.
+Previously all AviSynth script errors were swallowed and replaced with the
+generic `"avsr: failed to create AviSynth environment"`. avsr now surfaces
+AviSynth+'s actual error messages, e.g.:
+
+- `Tweak: YUV data only (no RGB)`
+- `Script error: There is no function named 'foobar'.`
 
 ---
 
@@ -94,17 +102,7 @@ may have been misclassified. No confirmed native crash.
 
 - **0 confirmed native segfaults in 5000 random chains** — avsr/AviSynth+
   integration is stable under fuzz
-- 39% error rate is mostly format-incompatible filter chains (e.g., YUV-only
-  filters applied to RGB32 sources like default `Blackness()`)
+- 39% error rate is mostly format-incompatible filter chains (YUV-only
+  filters on RGB sources, Invalid function names, etc.)
 - `Blackness()` defaults to RGB32 — `ColorYUV`, `Tweak`, `Limiter` fail on
   it unless preceded by `ConvertToYV12()`
-- `ConvertToYUY2()` fails on `Version()` output (RGB) and on some
-  `Blackness()` chains
-- `Histogram("classic")` + `FadeIn0(2)` fails on certain chain lengths
-
-### Stability assessment
-
-The fuzzer's subprocess isolation prevented any cascade failures.
-AviSynth+ environment creation errors (`"failed to create AviSynth
-environment"`) are the dominant failure mode — these are caught gracefully
-by avsr and do not crash the VapourSynth host process.

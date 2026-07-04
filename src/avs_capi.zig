@@ -89,7 +89,7 @@ extern fn avs_get_video_info(clip: ?*Clip) ?*const VideoInfo;
 fn avsIsClip(v: AVS_Value) bool { return v.type == 'c'; }
 fn avsIsError(v: AVS_Value) bool { return v.type == 'e'; }
 fn avsAsString(v: AVS_Value) ?[*:0]const u8 {
-    if (v.type != 's') return null;
+    if (v.type != 's' and v.type != 'e') return null;
     return @ptrCast(v.d.string);
 }
 
@@ -112,6 +112,16 @@ fn avsNewValueString(s: [*c]const u8) AVS_Value {
     return val;
 }
 
+/// Thread-local buffer for the last AviSynth error message.
+/// Written by Env.init on EvalError, read by getEvalError.
+var last_eval_error: [512]u8 = [_]u8{0} ** 512;
+var last_eval_error_len: usize = 0;
+
+/// Returns the error message from the most recent failed avs_invoke("Eval", ...).
+pub fn getEvalError() [:0]const u8 {
+    return last_eval_error[0..last_eval_error_len :0];
+}
+
 pub const Env = struct {
     raw: *ScriptEnvironment,
     clip: *Clip,
@@ -127,7 +137,18 @@ pub const Env = struct {
         defer avs_release_value(result);
 
         // avs_take_clip on a non-clip value (error/void) crashes; check first.
-        if (avsIsError(result)) return error.EvalError;
+        if (avsIsError(result)) {
+            if (avsAsString(result)) |msg| {
+                const zmsg: [*:0]const u8 = @ptrCast(msg);
+                const src_len = std.mem.len(zmsg);
+                last_eval_error_len = @min(src_len, 511);
+                @memcpy(last_eval_error[0..last_eval_error_len], zmsg[0..last_eval_error_len]);
+                last_eval_error[last_eval_error_len] = 0;
+            } else {
+                last_eval_error_len = 0;
+            }
+            return error.EvalError;
+        }
         if (!avsIsClip(result)) return error.NotAClip;
 
         const clip = avs_take_clip(result, env) orelse return error.NotAClip;

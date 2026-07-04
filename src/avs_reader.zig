@@ -176,7 +176,12 @@ fn createFilter(
     }
 
     var avs_env = avs.Env.init(input) catch {
-        mo.setError("avsr: failed to create AviSynth environment");
+        const msg = avs.getEvalError();
+        if (msg.len > 0) {
+            mo.setError(msg);
+        } else {
+            mo.setError("avsr: failed to create AviSynth environment");
+        }
         return;
     };
 
