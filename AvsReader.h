@@ -121,4 +121,12 @@ public:
 };
 
 
+static inline void validate(bool cond, const char* msg)
+{
+    if (cond) {
+        throw std::string(msg);
+    }
+}
+
+
 #endif

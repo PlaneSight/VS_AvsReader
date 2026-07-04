@@ -75,14 +75,14 @@ get_vs_video_format(VSVideoFormat* fmt, int pixel_type, int bitdepth,
         int subW;
         int subH;
     } table[] = {
-        { VideoInfo::CS_BGR32, cfRGB, 0, 0 },
-        { VideoInfo::CS_BGR24, cfRGB, 0, 0 },
-        { VideoInfo::CS_YV24,  cfYUV, 0, 0 },
-        { VideoInfo::CS_YV16,  cfYUV, 1, 0 },
-        { VideoInfo::CS_YV411, cfYUV, 2, 0 },
-        { VideoInfo::CS_I420,  cfYUV, 1, 1 },
-        { VideoInfo::CS_YV12,  cfYUV, 1, 1 },
-        { VideoInfo::CS_Y8,    cfGray, 0, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_BGR32), cfRGB, 0, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_BGR24), cfRGB, 0, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_YV24),  cfYUV, 0, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_YV16),  cfYUV, 1, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_YV411), cfYUV, 2, 0 },
+        { static_cast<uint64_t>(VideoInfo::CS_I420),  cfYUV, 1, 1 },
+        { static_cast<uint64_t>(VideoInfo::CS_YV12),  cfYUV, 1, 1 },
+        { static_cast<uint64_t>(VideoInfo::CS_Y8),    cfGray, 0, 0 },
         { 0, 0, 0, 0 }  /* sentinel */
     };
 

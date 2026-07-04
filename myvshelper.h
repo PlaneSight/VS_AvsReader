@@ -36,7 +36,7 @@ template <typename T>
 T get_prop(const VSAPI*, const VSMap*, const char*, int, int*);
 
 template <>
-static inline int
+inline int
 get_prop<int>(const VSAPI* api, const VSMap* in, const char* name, int idx,
               int* e)
 {
@@ -44,7 +44,7 @@ get_prop<int>(const VSAPI* api, const VSMap* in, const char* name, int idx,
 }
 
 template <>
-static inline int64_t
+inline int64_t
 get_prop<int64_t>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                   int* e)
 {
@@ -52,7 +52,7 @@ get_prop<int64_t>(const VSAPI* api, const VSMap* in, const char* name, int idx,
 }
 
 template <>
-static inline bool
+inline bool
 get_prop<bool>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                int* e)
 {
@@ -63,7 +63,7 @@ get_prop<bool>(const VSAPI* api, const VSMap* in, const char* name, int idx,
 }
 
 template <>
-static inline float
+inline float
 get_prop<float>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                 int* e)
 {
@@ -71,7 +71,7 @@ get_prop<float>(const VSAPI* api, const VSMap* in, const char* name, int idx,
 }
 
 template <>
-static inline double
+inline double
 get_prop<double>(const VSAPI* api, const VSMap* in, const char* name, int idx,
                  int* e)
 {
@@ -79,7 +79,7 @@ get_prop<double>(const VSAPI* api, const VSMap* in, const char* name, int idx,
 }
 
 template <>
-static inline const char*
+inline const char*
 get_prop<const char*>(const VSAPI* api, const VSMap* in, const char* name,
                       int idx, int* e)
 {

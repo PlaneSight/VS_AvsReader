@@ -9,15 +9,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ── Dependencies ────────────────────────────────────────────────────
-# VapourSynth4 headers — find via pkg-config on Linux/macOS, or
-# VapourSynth_DIR on Windows.
+# Vendored headers: VapourSynth4.h + AviSynth+ SDK
+set(VENDOR_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vendor")
+set(VAPOURSYNTH_VENDOR_DIR "${VENDOR_DIR}/vapoursynth")
+set(AVISYNTH_VENDOR_DIR "${VENDOR_DIR}/avisynth")
+
+# Attempt pkg-config only as fallback for the shared library linkage
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
     pkg_check_modules(VAPOURSYNTH vapoursynth-script)
 endif()
 
 if(NOT VAPOURSYNTH_FOUND)
-    # Fallback: look for the headers in common locations
     find_path(VAPOURSYNTH_INCLUDE_DIR
         NAMES VapourSynth4.h
         PATHS
@@ -42,22 +45,8 @@ if(NOT VAPOURSYNTH_FOUND)
     )
     if(VAPOURSYNTH_INCLUDE_DIR)
         set(VAPOURSYNTH_INCLUDE_DIRS "${VAPOURSYNTH_INCLUDE_DIR}")
-        set(VAPOURSYNTH_FOUND TRUE)
     endif()
 endif()
-
-# AviSynth+ headers
-find_path(AVISYNTH_INCLUDE_DIR
-    NAMES avisynth.h
-    PATHS
-        /usr/include
-        /usr/local/include
-        /opt/homebrew/include
-        /usr/include/avisynth
-        "C:/Program Files/AviSynth+/include"
-        "C:/Program Files (x86)/AviSynth+/include"
-    NO_DEFAULT_PATH
-)
 
 # ── Sources ─────────────────────────────────────────────────────────
 set(SOURCES
@@ -69,9 +58,10 @@ set(SOURCES
 add_library(vsavsreader SHARED ${SOURCES})
 
 target_include_directories(vsavsreader PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${VAPOURSYNTH_INCLUDE_DIRS}
-    ${AVISYNTH_INCLUDE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}           # for "AvsReader.h", "myvshelper.h"
+    ${VAPOURSYNTH_VENDOR_DIR}             # vendored VapourSynth4.h
+    ${AVISYNTH_VENDOR_DIR}                # vendored avisynth.h + avs/*.h
+    ${VAPOURSYNTH_INCLUDE_DIRS}           # system fallback (if any)
 )
 
 if(WIN32)
