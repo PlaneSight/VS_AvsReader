@@ -78,6 +78,7 @@ When the input is RGB32 and `alpha=True`, two clip outputs are created:
 - `Import` — base RGB clip
 - `Import_Alpha` — alpha channel as Gray8
 
+<<<<<<< HEAD
 ## Porting `.avsi` to VapourSynth with `avsr` as a reference oracle
 
 The plugin is useful as a porting aid: keep the original AviSynth script
@@ -192,6 +193,10 @@ ref = core.avsr.Eval(
 - **Reproducible input**: feed both sides the same `BlankClip` seed
   (`color=...`) so the diff is deterministic. For noise-dependent
   filters, render the AviSynth side once and `core.std.Cache` it.
+
+## Docs
+
+- [`docs/avisynth-c-api-research.md`](docs/avisynth-c-api-research.md) — Complete AviSynth+ API reference: C API catalog (V6–V12), pixel type constants, C++ plugin interface (IScriptEnvironment), original plugin architecture, Zig port gap analysis, and macOS/POSIX notes.
 
 ## Project structure
 
