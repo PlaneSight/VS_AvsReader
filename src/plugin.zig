@@ -33,6 +33,15 @@ export fn VapourSynthPluginInit2(
     );
 
     ZAPI.Plugin.function(
+        "Version",
+        "",
+        "version:data;",
+        vs_lib.versionCreate,
+        pl,
+        vspapi,
+    );
+
+    ZAPI.Plugin.function(
         "Eval",
         "lines:data;bitdepth:int:opt;alpha:int:opt;",
         "clip:vnode;",

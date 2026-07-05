@@ -161,6 +161,24 @@ pub fn importCreate(
     _: ?*anyopaque, core: ?*vs.Core, vsapi: ?*const vs.API,
 ) callconv(.c) void { createFilter(in, out, "Import", core, vsapi); }
 
+pub fn versionCreate(
+    _: ?*const vs.Map, out: ?*vs.Map,
+    _: ?*anyopaque, core: ?*vs.Core, vsapi: ?*const vs.API,
+) callconv(.c) void {
+    const zapi = ZAPI.init(vsapi, core, null);
+    const mo = zapi.initZMap(out);
+
+    var buf: [256]u8 = [_]u8{0} ** 256;
+    const ver = avs.versionString(buf[0..255]) catch |err| {
+        switch (err) {
+            error.AvisynthNotFound => mo.setError("avsr: libavisynth not found (install AviSynth+ 3.6 or later)"),
+            else => mo.setError("avsr: failed to query AviSynth version"),
+        }
+        return;
+    };
+    mo.setData("version", buf[0..ver.len :0], .Utf8, .Replace);
+}
+
 pub fn evalCreate(
     in: ?*const vs.Map, out: ?*vs.Map,
     _: ?*anyopaque, core: ?*vs.Core, vsapi: ?*const vs.API,

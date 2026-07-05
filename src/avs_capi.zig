@@ -241,6 +241,26 @@ fn captureError(msg: ?[*:0]const u8) void {
     }
 }
 
+/// Invokes AVS `VersionString()` and copies the result into `buf`.
+/// Cheap standalone helper so "is my AviSynth+ found" is debuggable.
+pub fn versionString(buf: []u8) ![]const u8 {
+    const f = try acquireFns();
+    const env = f.avs_create_script_environment(8) orelse return error.CreateFailed;
+    defer f.avs_delete_script_environment(env);
+
+    // Zero-argument invoke takes an empty array value.
+    const args = AVS_Value{ .type = 'a', .array_size = 0, .d = .{ .string = null } };
+    const result = f.avs_invoke(env, "VersionString", args, null);
+    defer f.avs_release_value(result);
+
+    if (avsIsError(result)) return error.EvalError;
+    if (result.type != 's') return error.NotAString;
+    const s = avsAsString(result) orelse return error.NotAString;
+    const len = @min(std.mem.len(s), buf.len);
+    @memcpy(buf[0..len], s[0..len]);
+    return buf[0..len];
+}
+
 /// Format description mapped to VapourSynth terms, including the AVS plane
 /// request order for VS plane indices 0..num_planes-1.
 pub const MappedFormat = struct {
