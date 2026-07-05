@@ -9,15 +9,10 @@ const avs = @import("avs_capi.zig");
 const AvsReader = struct {
     avs_env: avs.Env,
     vi: vs.VideoInfo,
-    write_frame: WriteFrameFn,
+    // AVS plane request constants for VS plane indices 0..num_planes-1.
+    num_planes: u8,
+    avs_planes: [3]c_int,
 };
-
-const WriteFrameFn = *const fn (
-    reader: *const AvsReader,
-    dst: *vs.Frame,
-    n: c_int,
-    zapi: *const ZAPI,
-) void;
 
 fn avsrGetFrame(
     n: c_int,
@@ -32,19 +27,48 @@ fn avsrGetFrame(
     const d: *AvsReader = @ptrCast(@alignCast(instance_data));
     const zapi = ZAPI.init(vsapi, core, frame_ctx);
 
-    if (activation_reason == .Initial) {
-        const dst = zapi.newVideoFrame(
-            &d.vi.format, d.vi.width, d.vi.height, null,
-        ) orelse return null;
+    if (activation_reason != .Initial) return null;
 
-        const props = zapi.getFramePropertiesRW(dst);
-        _ = zapi.mapSetInt(props, "_DurationNum", d.vi.fpsDen, .Replace);
-        _ = zapi.mapSetInt(props, "_DurationDen", d.vi.fpsNum, .Replace);
-
-        d.write_frame(d, dst, n, &zapi);
-        return dst;
+    const frame = d.avs_env.getFrame(n) orelse {
+        zapi.setFilterError("avsr: AviSynth returned no frame");
+        return null;
+    };
+    defer d.avs_env.releaseFrame(frame);
+    // AviSynth reports runtime frame errors on the clip, not by returning null.
+    if (d.avs_env.getClipError()) |msg| {
+        zapi.setFilterError(std.mem.span(msg));
+        return null;
     }
-    return null;
+
+    const dst = zapi.newVideoFrame(
+        &d.vi.format, d.vi.width, d.vi.height, null,
+    ) orelse return null;
+
+    const props = zapi.getFramePropertiesRW(dst);
+    _ = zapi.mapSetInt(props, "_DurationNum", d.vi.fpsDen, .Replace);
+    _ = zapi.mapSetInt(props, "_DurationDen", d.vi.fpsNum, .Replace);
+
+    // Post-normalization every format is planar: one blit loop for all.
+    var p: u8 = 0;
+    while (p < d.num_planes) : (p += 1) {
+        const ap = d.avs_planes[p];
+        const src = d.avs_env.getReadPtr(frame, ap) orelse {
+            zapi.setFilterError("avsr: missing plane in AviSynth frame");
+            zapi.freeFrame(dst);
+            return null;
+        };
+        const sp: usize = @intCast(d.avs_env.getPitch(frame, ap));
+        const rs: usize = @intCast(d.avs_env.getRowSize(frame, ap));
+        const h: usize = @intCast(d.avs_env.getHeight(frame, ap));
+        const dp = zapi.getWritePtr(dst, p);
+        const ds: usize = @intCast(zapi.getStride(dst, p));
+
+        var y: usize = 0;
+        while (y < h) : (y += 1) {
+            @memcpy(dp[y * ds ..][0..rs], src[y * sp ..][0..rs]);
+        }
+    }
+    return dst;
 }
 
 fn avsrFree(
@@ -55,88 +79,6 @@ fn avsrFree(
     const d: *AvsReader = @ptrCast(@alignCast(instance_data));
     d.avs_env.deinit();
     std.heap.c_allocator.destroy(d);
-}
-
-fn writeYUV(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
-    const frame = reader.avs_env.getFrame(n) orelse return;
-    defer reader.avs_env.releaseFrame(frame);
-    // AviSynth plane constants are bitmasks (Y=0, U=2, V=4), not 0,1,2.
-    // VapourSynth planes are sequential: 0=Y, 1=U, 2=V.
-    const avs_planes = [_]c_int{ avs.Plane.Y, avs.Plane.U, avs.Plane.V };
-    var p: u32 = 0;
-    while (p < 3) : (p += 1) {
-        const ap = avs_planes[p];
-        const src = reader.avs_env.getReadPtr(frame, ap) orelse break;
-        const sp = reader.avs_env.getPitch(frame, ap);
-        const rs = reader.avs_env.getRowSize(frame, ap);
-        const h = reader.avs_env.getHeight(frame, ap);
-        const dp = zapi.getWritePtr(dst, @intCast(p));
-        const ds = zapi.getStride(dst, @intCast(p));
-
-        var y: i32 = 0;
-        while (y < h) : (y += 1) {
-            const yu = @as(usize, @intCast(y));
-            @memcpy(dp[yu * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
-                    src[yu * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
-        }
-    }
-}
-
-fn writeRGB24(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
-    writeRGB(reader, dst, n, zapi, 3);
-}
-
-fn writeRGB32(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
-    writeRGB(reader, dst, n, zapi, 4);
-}
-
-// AviSynth BGR is bottom-up; VapourSynth RGB is top-down.
-// sy walks source rows h-1→0, dy walks dest rows 0→h-1.
-fn writeRGB(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI, channels: i32) void {
-    const frame = reader.avs_env.getFrame(n) orelse return;
-    defer reader.avs_env.releaseFrame(frame);
-    const src = reader.avs_env.getReadPtr(frame, 0) orelse return;
-    const sp = reader.avs_env.getPitch(frame, 0);
-    const rb = reader.avs_env.getRowSize(frame, 0);
-    const h  = reader.avs_env.getHeight(frame, 0);
-    const w  = @divExact(rb, channels);
-    const ds = zapi.getStride(dst, 0);
-    const dr = zapi.getWritePtr(dst, 0);
-    const dg = zapi.getWritePtr(dst, 1);
-    const db = zapi.getWritePtr(dst, 2);
-
-    var sy: i32 = h - 1;
-    var dy: i32 = 0;
-    while (dy < h) : ({ dy += 1; sy -= 1; }) {
-        const dy_off = @as(usize, @intCast(dy)) * @as(usize, @intCast(ds));
-        const sy_off = @as(usize, @intCast(sy)) * @as(usize, @intCast(sp));
-        var x: i32 = 0;
-        while (x < w) : (x += 1) {
-            const off = @as(usize, @intCast(x)) * @as(usize, @intCast(channels));
-            const dx = @as(usize, @intCast(x));
-            db[dy_off + dx] = src[sy_off + off + 0];
-            dg[dy_off + dx] = src[sy_off + off + 1];
-            dr[dy_off + dx] = src[sy_off + off + 2];
-        }
-    }
-}
-
-fn writeGray(reader: *const AvsReader, dst: *vs.Frame, n: c_int, zapi: *const ZAPI) void {
-    const frame = reader.avs_env.getFrame(n) orelse return;
-    defer reader.avs_env.releaseFrame(frame);
-    const src = reader.avs_env.getReadPtr(frame, 0) orelse return;
-    const sp = reader.avs_env.getPitch(frame, 0);
-    const rs = reader.avs_env.getRowSize(frame, 0);
-    const h  = reader.avs_env.getHeight(frame, 0);
-    const dp = zapi.getWritePtr(dst, 0);
-    const ds = zapi.getStride(dst, 0);
-
-    var y: i32 = 0;
-    while (y < h) : (y += 1) {
-        const yu = @as(usize, @intCast(y));
-        @memcpy(dp[yu * @as(usize, @intCast(ds)) ..][0..@intCast(rs)],
-                src[yu * @as(usize, @intCast(sp)) ..][0..@intCast(rs)]);
-    }
 }
 
 pub fn importCreate(
@@ -161,13 +103,20 @@ fn createFilter(
     const mo = zapi.initZMap(out);
 
     const bitdepth = mi.getValue(i32, "bitdepth") orelse 8;
+    const alpha = mi.getValue(i32, "alpha") orelse 0;
     const input = if (mode[0] == 'E')
         mi.getData("lines", 0) orelse ""
     else
         mi.getData("script", 0) orelse "";
 
-    if (bitdepth != 8 and bitdepth != 9 and bitdepth != 10 and bitdepth != 16) {
-        mo.setError("avsr: invalid bitdepth");
+    // The legacy MSB/LSB stacked bitdepth hack is gone: AviSynth+ high bit
+    // depth formats are mapped natively, so only the default 8 is accepted.
+    if (bitdepth != 8) {
+        mo.setError("avsr: invalid bitdepth (parameter removed; AVS+ high bit depth is mapped natively)");
+        return;
+    }
+    if (alpha != 0) {
+        mo.setError("avsr: alpha output is not implemented");
         return;
     }
     if (input.len < 1) {
@@ -175,7 +124,7 @@ fn createFilter(
         return;
     }
 
-    var avs_env = avs.Env.init(input) catch {
+    var avs_env = avs.Env.init(mode, input) catch {
         const msg = avs.getEvalError();
         if (msg.len > 0) {
             mo.setError(msg);
@@ -185,17 +134,21 @@ fn createFilter(
         return;
     };
 
-    const cf = avs_env.colorFamily();
-    const ss = avs_env.subSampling();
-    const color_family: vs.ColorFamily = switch (cf) {
+    const mapped = avs_env.mapFormat() catch {
+        mo.setError("avsr: unsupported pixel format");
+        avs_env.deinit();
+        return;
+    };
+    const color_family: vs.ColorFamily = switch (mapped.family) {
         .Gray => .Gray,
         .RGB => .RGB,
         .YUV => .YUV,
     };
+    const sample_type: vs.SampleType = if (mapped.is_float) .Float else .Integer;
 
     const fmt = blk: {
         var f: vs.VideoFormat = undefined;
-        if (vsapi.?.queryVideoFormat.?(&f, color_family, .Integer, 8, ss.w, ss.h, core) != 0)
+        if (zapi.queryVideoFormat(&f, color_family, sample_type, mapped.bits, mapped.sub_w, mapped.sub_h) != 0)
             break :blk f;
         break :blk null;
     } orelse {
@@ -210,25 +163,18 @@ fn createFilter(
         return;
     };
 
-    const vs_width: i32 = if (bitdepth > 8) @divTrunc(avs_env.vi.width, 2) else avs_env.vi.width;
-
-    const writer: WriteFrameFn = switch (cf) {
-        .RGB => if (avs_env.vi.pixel_type == @intFromEnum(avs.PixelType.RGB32)) writeRGB32 else writeRGB24,
-        .Gray => writeGray,
-        .YUV => writeYUV,
-    };
-
     data.* = .{
         .avs_env = avs_env,
         .vi = .{
             .format = fmt,
             .fpsNum = avs_env.vi.fps_numerator,
             .fpsDen = avs_env.vi.fps_denominator,
-            .width = vs_width,
+            .width = avs_env.vi.width,
             .height = avs_env.vi.height,
             .numFrames = avs_env.vi.num_frames,
         },
-        .write_frame = writer,
+        .num_planes = mapped.num_planes,
+        .avs_planes = mapped.planes,
     };
 
     const deps = [_]vs.FilterDependency{};
