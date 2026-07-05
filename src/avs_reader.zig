@@ -45,8 +45,18 @@ fn avsrGetFrame(
     ) orelse return null;
 
     const props = zapi.getFramePropertiesRW(dst);
+    // Set defaults first: props carried by the AVS frame replace them below.
     _ = zapi.mapSetInt(props, "_DurationNum", d.vi.fpsDen, .Replace);
     _ = zapi.mapSetInt(props, "_DurationDen", d.vi.fpsNum, .Replace);
+    bridgeProps(d, frame, props, &zapi, vsapi.?);
+    if (zapi.mapGetType(props, "_FieldBased") == .Unset) {
+        const it: u32 = @bitCast(d.avs_env.vi.image_type);
+        const fb: i64 = if ((it & avs.IT_FIELDBASED) != 0)
+            (if ((it & avs.IT_TFF) != 0) 2 else if ((it & avs.IT_BFF) != 0) 1 else 0)
+        else
+            0;
+        _ = zapi.mapSetInt(props, "_FieldBased", fb, .Replace);
+    }
 
     // Post-normalization every format is planar: one blit loop for all.
     var p: u8 = 0;
@@ -69,6 +79,71 @@ fn avsrGetFrame(
         }
     }
     return dst;
+}
+
+// Copies frame properties from the AVS frame to the VS frame. AVS+ and VS
+// share the reserved prop vocabulary (_Matrix, _ColorRange, _SARNum, …), so a
+// straight copy is correct. Clip- and frame-typed props cannot cross the
+// boundary and are skipped.
+fn bridgeProps(
+    d: *const AvsReader,
+    frame: *const avs.VideoFrame,
+    props: ?*vs.Map,
+    zapi: *const ZAPI,
+    vsapi: *const vs.API,
+) void {
+    const pf = d.avs_env.prop_fns orelse return;
+    const env = d.avs_env.raw;
+    const map = pf.avs_get_frame_props_ro(env, frame) orelse return;
+
+    const num_keys = pf.avs_prop_num_keys(env, map);
+    var i: c_int = 0;
+    while (i < num_keys) : (i += 1) {
+        const key = pf.avs_prop_get_key(env, map, i) orelse continue;
+        const zkey = std.mem.span(key);
+        const ne = pf.avs_prop_num_elements(env, map, key);
+        if (ne < 1) continue;
+        var err: c_int = 0;
+
+        switch (pf.avs_prop_get_type(env, map, key)) {
+            avs.PropType.INT => if (ne == 1) {
+                const v = pf.avs_prop_get_int(env, map, key, 0, &err);
+                if (err == 0) _ = zapi.mapSetInt(props, zkey, v, .Replace);
+            } else {
+                if (pf.avs_prop_get_int_array(env, map, key, &err)) |arr| {
+                    if (err == 0) _ = zapi.mapSetIntArray(props, zkey, arr[0..@intCast(ne)]);
+                }
+            },
+            avs.PropType.FLOAT => if (ne == 1) {
+                const v = pf.avs_prop_get_float(env, map, key, 0, &err);
+                if (err == 0) _ = zapi.mapSetFloat(props, zkey, v, .Replace);
+            } else {
+                if (pf.avs_prop_get_float_array(env, map, key, &err)) |arr| {
+                    if (err == 0) _ = zapi.mapSetFloatArray(props, zkey, arr[0..@intCast(ne)]);
+                }
+            },
+            avs.PropType.DATA => {
+                var j: c_int = 0;
+                while (j < ne) : (j += 1) {
+                    const data = pf.avs_prop_get_data(env, map, key, j, &err) orelse continue;
+                    if (err != 0) continue;
+                    const size = pf.avs_prop_get_data_size(env, map, key, j, &err);
+                    if (err != 0 or size < 0) continue;
+                    const hint: vs.DataTypeHint = blk: {
+                        const get_hint = pf.avs_prop_get_data_type_hint orelse break :blk .Unknown;
+                        var herr: c_int = 0;
+                        const h = get_hint(env, map, key, j, &herr);
+                        if (herr != 0) break :blk .Unknown;
+                        break :blk std.enums.fromInt(vs.DataTypeHint, h) orelse .Unknown;
+                    };
+                    // Raw vsapi call: ZAPI's mapSetData wants a sentinel slice,
+                    // but binary prop data need not be null-terminated.
+                    _ = vsapi.mapSetData.?(props, key, @ptrCast(data), size, hint, if (j == 0) .Replace else .Append);
+                }
+            },
+            else => {},
+        }
+    }
 }
 
 fn avsrFree(

@@ -8,6 +8,22 @@ const builtin = @import("builtin");
 pub const ScriptEnvironment = opaque {};
 pub const Clip = opaque {};
 pub const VideoFrame = opaque {};
+pub const Map = opaque {}; // AVS_Map — frame property map (interface V8+)
+
+// image_type bits (avisynth_c.h AVS_IT_*)
+pub const IT_BFF: u32 = 1 << 0;
+pub const IT_TFF: u32 = 1 << 1;
+pub const IT_FIELDBASED: u32 = 1 << 2;
+
+// AVS_PROPTYPE_* — returned by avs_prop_get_type
+pub const PropType = struct {
+    pub const UNSET: u8 = 'u';
+    pub const INT: u8 = 'i';
+    pub const FLOAT: u8 = 'f';
+    pub const DATA: u8 = 's';
+    pub const CLIP: u8 = 'c';
+    pub const FRAME: u8 = 'v';
+};
 
 // AviSynth plane constants are bitmasks, not sequential indices.
 // avisynth_c.h: AVS_DEFAULT_PLANE=0, AVS_PLANAR_Y=1, AVS_PLANAR_U=2,
@@ -99,11 +115,30 @@ pub const Fns = struct {
     avs_get_plane_height_subsampling: *const fn (?*const VideoInfo, c_int) callconv(.c) c_int,
 };
 
+/// Frame property exports (interface V8+, AviSynth+ 3.6). Loaded separately
+/// from Fns: if any is missing the plugin still works, it just skips prop
+/// bridging. avs_prop_get_data_type_hint is V11-only, hence optional even here.
+pub const PropFns = struct {
+    avs_get_frame_props_ro: *const fn (?*ScriptEnvironment, ?*const VideoFrame) callconv(.c) ?*const Map,
+    avs_prop_num_keys: *const fn (?*ScriptEnvironment, ?*const Map) callconv(.c) c_int,
+    avs_prop_get_key: *const fn (?*ScriptEnvironment, ?*const Map, c_int) callconv(.c) ?[*:0]const u8,
+    avs_prop_num_elements: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8) callconv(.c) c_int,
+    avs_prop_get_type: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8) callconv(.c) u8,
+    avs_prop_get_int: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, c_int, ?*c_int) callconv(.c) i64,
+    avs_prop_get_float: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, c_int, ?*c_int) callconv(.c) f64,
+    avs_prop_get_data: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, c_int, ?*c_int) callconv(.c) ?[*]const u8,
+    avs_prop_get_data_size: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, c_int, ?*c_int) callconv(.c) c_int,
+    avs_prop_get_int_array: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, ?*c_int) callconv(.c) ?[*]const i64,
+    avs_prop_get_float_array: *const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, ?*c_int) callconv(.c) ?[*]const f64,
+    avs_prop_get_data_type_hint: ?*const fn (?*ScriptEnvironment, ?*const Map, [*c]const u8, c_int, ?*c_int) callconv(.c) c_int,
+};
+
 pub const LoadError = error{ AvisynthNotFound, MissingSymbol };
 
 pub const Lib = struct {
     dylib: std.DynLib,
     fns: Fns,
+    prop_fns: ?PropFns,
 
     pub fn load() LoadError!Lib {
         // The unversioned name only exists with dev symlinks installed; the
@@ -129,7 +164,22 @@ pub const Lib = struct {
             @field(fns, f.name) = dylib.lookup(f.type, f.name) orelse
                 return error.MissingSymbol;
         }
-        return .{ .dylib = dylib, .fns = fns };
+
+        // Optional-typed fields may be absent; a missing required field
+        // disables prop bridging entirely instead of failing the load.
+        const prop_fns: ?PropFns = blk: {
+            var pf: PropFns = undefined;
+            inline for (@typeInfo(PropFns).@"struct".fields) |f| {
+                if (@typeInfo(f.type) == .optional) {
+                    @field(pf, f.name) = dylib.lookup(@typeInfo(f.type).optional.child, f.name);
+                } else {
+                    @field(pf, f.name) = dylib.lookup(f.type, f.name) orelse break :blk null;
+                }
+            }
+            break :blk pf;
+        };
+
+        return .{ .dylib = dylib, .fns = fns, .prop_fns = prop_fns };
     }
 };
 
@@ -145,6 +195,14 @@ fn acquireFns() LoadError!*const Fns {
     defer g_lib_mutex.unlock();
     if (g_lib == null) g_lib = try Lib.load();
     return &g_lib.?.fns;
+}
+
+// Only meaningful after acquireFns succeeded (i.e. while an Env exists).
+fn loadedPropFns() ?*const PropFns {
+    if (g_lib) |*lib| {
+        if (lib.prop_fns) |*pf| return pf;
+    }
+    return null;
 }
 
 // AVS_Value type testers (inline in C header, reimplemented here).
@@ -197,6 +255,7 @@ pub const MappedFormat = struct {
 
 pub const Env = struct {
     fns: *const Fns,
+    prop_fns: ?*const PropFns,
     raw: *ScriptEnvironment,
     clip: *Clip,
     vi: VideoInfo,
@@ -228,7 +287,13 @@ pub const Env = struct {
         const vi_ptr = f.avs_get_video_info(clip) orelse return error.NoVideo;
         if (vi_ptr.width == 0) return error.NoVideo;
 
-        var self = Env{ .fns = f, .raw = env, .clip = clip, .vi = vi_ptr.* };
+        var self = Env{
+            .fns = f,
+            .prop_fns = loadedPropFns(),
+            .raw = env,
+            .clip = clip,
+            .vi = vi_ptr.*,
+        };
 
         const pt: u32 = @bitCast(self.vi.pixel_type);
         if ((pt & CS_YUY2) == CS_YUY2) {
