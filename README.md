@@ -78,6 +78,10 @@ When the input is RGB32 and `alpha=True`, two clip outputs are created:
 - `Import` — base RGB clip
 - `Import_Alpha` — alpha channel as Gray8
 
+## Docs
+
+- [`docs/avisynth-c-api-research.md`](docs/avisynth-c-api-research.md) — Complete AviSynth+ API reference: C API catalog (V6–V12), pixel type constants, C++ plugin interface (IScriptEnvironment), original plugin architecture, Zig port gap analysis, and macOS/POSIX notes.
+
 ## Project structure
 
 ```
