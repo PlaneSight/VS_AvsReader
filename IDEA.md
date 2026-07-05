@@ -1,0 +1,1 @@
+I want to improve this plugin to have a completely functional avisynth+ environment within Vapoursynth. Latest SDK. Zig 0.16.x. Once this plugin in finished we should be able to reliably load and interop entire avisynth scripts and workflows seamlessly within vapoursynth.
