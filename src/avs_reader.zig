@@ -124,12 +124,18 @@ fn createFilter(
         return;
     }
 
-    var avs_env = avs.Env.init(mode, input) catch {
-        const msg = avs.getEvalError();
-        if (msg.len > 0) {
-            mo.setError(msg);
-        } else {
-            mo.setError("avsr: failed to create AviSynth environment");
+    var avs_env = avs.Env.init(mode, input) catch |err| {
+        switch (err) {
+            error.AvisynthNotFound => mo.setError("avsr: libavisynth not found (install AviSynth+ 3.6 or later)"),
+            error.MissingSymbol, error.TooOld => mo.setError("avsr: AviSynth+ is too old (3.6+ / interface V8 required)"),
+            else => {
+                const msg = avs.getEvalError();
+                if (msg.len > 0) {
+                    mo.setError(msg);
+                } else {
+                    mo.setError("avsr: failed to create AviSynth environment");
+                }
+            },
         }
         return;
     };

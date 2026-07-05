@@ -1,5 +1,9 @@
-// avs_capi.zig — Pure Zig FFI for AviSynth+ C API
+// avs_capi.zig — Pure Zig FFI for AviSynth+ C API, loaded at runtime via dlopen.
+//
+// libavisynth is never link-time bound: the plugin must load into VapourSynth
+// on machines without AviSynth+ and only error when avsr.* is actually invoked.
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const ScriptEnvironment = opaque {};
 pub const Clip = opaque {};
@@ -56,19 +60,92 @@ pub const AVS_Value = extern struct {
     },
 };
 
-extern fn avs_create_script_environment(version: c_int) ?*ScriptEnvironment;
-extern fn avs_delete_script_environment(env: ?*ScriptEnvironment) void;
+comptime {
+    std.debug.assert(@sizeOf(AVS_Value) == 16);
+    std.debug.assert(@sizeOf(VideoInfo) == 48);
+}
 
-extern fn avs_set_to_string(val: *AVS_Value, s: [*c]const u8) void;
-extern fn avs_set_to_clip(val: *AVS_Value, clip: ?*Clip) void;
-extern fn avs_release_value(v: AVS_Value) void;
+/// Function pointers resolved from libavisynth. Every field name is the
+/// exact export name; Lib.load resolves them by iterating the fields, so
+/// adding a function is a one-line change. Only symbols exported since
+/// AviSynth+ 3.6 (interface V8) belong here — V11-only setters like
+/// avs_set_to_string are reimplemented inline instead.
+pub const Fns = struct {
+    avs_create_script_environment: *const fn (c_int) callconv(.c) ?*ScriptEnvironment,
+    avs_delete_script_environment: *const fn (?*ScriptEnvironment) callconv(.c) void,
+    avs_check_version: *const fn (?*ScriptEnvironment, c_int) callconv(.c) c_int,
+    avs_invoke: *const fn (?*ScriptEnvironment, [*c]const u8, AVS_Value, [*c]const [*c]const u8) callconv(.c) AVS_Value,
+    avs_release_value: *const fn (AVS_Value) callconv(.c) void,
+    avs_set_to_clip: *const fn (*AVS_Value, ?*Clip) callconv(.c) void,
+    avs_take_clip: *const fn (AVS_Value, ?*ScriptEnvironment) callconv(.c) ?*Clip,
+    avs_release_clip: *const fn (?*Clip) callconv(.c) void,
+    avs_get_video_info: *const fn (?*Clip) callconv(.c) ?*const VideoInfo,
+    avs_clip_get_error: *const fn (?*Clip) callconv(.c) ?[*:0]const u8,
+    avs_get_frame: *const fn (?*Clip, c_int) callconv(.c) ?*VideoFrame,
+    avs_release_video_frame: *const fn (?*VideoFrame) callconv(.c) void,
+    avs_get_read_ptr_p: *const fn (?*const VideoFrame, c_int) callconv(.c) ?[*]const u8,
+    avs_get_pitch_p: *const fn (?*const VideoFrame, c_int) callconv(.c) c_int,
+    avs_get_row_size_p: *const fn (?*const VideoFrame, c_int) callconv(.c) c_int,
+    avs_get_height_p: *const fn (?*const VideoFrame, c_int) callconv(.c) c_int,
+    // AVS+ format query exports — decode pixel_type structurally so every
+    // current and future format maps without a lookup table.
+    avs_bits_per_component: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_component_size: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_is_y: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_is_yuva: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_is_planar_rgb: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_is_planar_rgba: *const fn (?*const VideoInfo) callconv(.c) c_int,
+    avs_get_plane_width_subsampling: *const fn (?*const VideoInfo, c_int) callconv(.c) c_int,
+    avs_get_plane_height_subsampling: *const fn (?*const VideoInfo, c_int) callconv(.c) c_int,
+};
 
-extern fn avs_invoke(env: ?*ScriptEnvironment, name: [*c]const u8, args: AVS_Value, arg_names: [*c]const [*c]const u8) AVS_Value;
+pub const LoadError = error{ AvisynthNotFound, MissingSymbol };
 
-extern fn avs_take_clip(v: AVS_Value, env: ?*ScriptEnvironment) ?*Clip;
-extern fn avs_release_clip(clip: ?*Clip) void;
-extern fn avs_get_video_info(clip: ?*Clip) ?*const VideoInfo;
-extern fn avs_clip_get_error(clip: ?*Clip) ?[*:0]const u8;
+pub const Lib = struct {
+    dylib: std.DynLib,
+    fns: Fns,
+
+    pub fn load() LoadError!Lib {
+        // The unversioned name only exists with dev symlinks installed; the
+        // soname (SOVERSION 11 = interface version) is always present.
+        const names: []const []const u8 = switch (builtin.os.tag) {
+            .macos => &.{
+                "libavisynth.dylib",
+                "libavisynth.11.dylib",
+                "/usr/local/lib/libavisynth.dylib",
+                "/usr/local/lib/libavisynth.11.dylib",
+                "/opt/homebrew/lib/libavisynth.dylib",
+                "/opt/homebrew/lib/libavisynth.11.dylib",
+            },
+            else => &.{ "libavisynth.so", "libavisynth.so.11" },
+        };
+        var dylib = for (names) |n| {
+            break std.DynLib.open(n) catch continue;
+        } else return error.AvisynthNotFound;
+        errdefer dylib.close();
+
+        var fns: Fns = undefined;
+        inline for (@typeInfo(Fns).@"struct".fields) |f| {
+            @field(fns, f.name) = dylib.lookup(f.type, f.name) orelse
+                return error.MissingSymbol;
+        }
+        return .{ .dylib = dylib, .fns = fns };
+    }
+};
+
+// libavisynth is loaded once and kept for the process lifetime: filter
+// instances share the symbols and an unload/reload cycle buys nothing.
+var g_lib: ?Lib = null;
+var g_lib_mutex: std.atomic.Mutex = .unlocked;
+
+fn acquireFns() LoadError!*const Fns {
+    // Spinning is fine here: this only runs at filter creation, and the
+    // critical section is one dlopen plus symbol lookups.
+    while (!g_lib_mutex.tryLock()) std.Thread.yield() catch {};
+    defer g_lib_mutex.unlock();
+    if (g_lib == null) g_lib = try Lib.load();
+    return &g_lib.?.fns;
+}
 
 // AVS_Value type testers (inline in C header, reimplemented here).
 // Type codes: 'c'=clip, 'e'=error, 'v'=void, 's'=string, etc.
@@ -79,30 +156,9 @@ fn avsAsString(v: AVS_Value) ?[*:0]const u8 {
     return @ptrCast(v.d.string);
 }
 
-extern fn avs_get_frame(clip: ?*Clip, n: c_int) ?*VideoFrame;
-extern fn avs_release_video_frame(frame: ?*VideoFrame) void;
-extern fn avs_get_read_ptr_p(frame: ?*const VideoFrame, plane: c_int) ?[*]const u8;
-extern fn avs_get_pitch_p(frame: ?*const VideoFrame, plane: c_int) c_int;
-extern fn avs_get_row_size_p(frame: ?*const VideoFrame, plane: c_int) c_int;
-extern fn avs_get_height_p(frame: ?*const VideoFrame, plane: c_int) c_int;
-
-// AVS+ format query exports — these decode pixel_type structurally so every
-// current and future format maps without a lookup table.
-extern fn avs_bits_per_component(vi: ?*const VideoInfo) c_int;
-extern fn avs_component_size(vi: ?*const VideoInfo) c_int;
-extern fn avs_is_y(vi: ?*const VideoInfo) c_int;
-extern fn avs_is_yuva(vi: ?*const VideoInfo) c_int;
-extern fn avs_is_planar_rgb(vi: ?*const VideoInfo) c_int;
-extern fn avs_is_planar_rgba(vi: ?*const VideoInfo) c_int;
-extern fn avs_get_plane_width_subsampling(vi: ?*const VideoInfo, plane: c_int) c_int;
-extern fn avs_get_plane_height_subsampling(vi: ?*const VideoInfo, plane: c_int) c_int;
-
-// avs_new_value_string is inline in the header: sets type='s', d.string=s.
-// avs_set_to_string is the exported equivalent.
+// Baked inline setter from the header ("does not require avs_release_value").
 fn avsNewValueString(s: [*c]const u8) AVS_Value {
-    var val: AVS_Value = undefined;
-    avs_set_to_string(&val, s);
-    return val;
+    return .{ .type = 's', .array_size = 1, .d = .{ .string = s } };
 }
 
 /// Thread-local buffer for the last AviSynth error message.
@@ -140,6 +196,7 @@ pub const MappedFormat = struct {
 };
 
 pub const Env = struct {
+    fns: *const Fns,
     raw: *ScriptEnvironment,
     clip: *Clip,
     vi: VideoInfo,
@@ -149,13 +206,15 @@ pub const Env = struct {
     /// AVS domain (YUY2 → YV16, interleaved RGB → planar RGB/RGBA) so the
     /// frame path is a single planar blit.
     pub fn init(mode: [:0]const u8, input: []const u8) !Env {
-        const env = avs_create_script_environment(8) orelse return error.CreateFailed;
-        errdefer avs_delete_script_environment(env);
+        const f = try acquireFns();
+
+        const env = f.avs_create_script_environment(8) orelse return error.CreateFailed;
+        errdefer f.avs_delete_script_environment(env);
+        if (f.avs_check_version(env, 8) != 0) return error.TooOld;
 
         const args = avsNewValueString(input.ptr);
-        defer avs_release_value(args);
-        const result = avs_invoke(env, mode.ptr, args, null);
-        defer avs_release_value(result);
+        const result = f.avs_invoke(env, mode.ptr, args, null);
+        defer f.avs_release_value(result);
 
         // avs_take_clip on a non-clip value (error/void) crashes; check first.
         if (avsIsError(result)) {
@@ -164,12 +223,12 @@ pub const Env = struct {
         }
         if (!avsIsClip(result)) return error.NotAClip;
 
-        const clip = avs_take_clip(result, env) orelse return error.NotAClip;
-        errdefer avs_release_clip(clip);
-        const vi_ptr = avs_get_video_info(clip) orelse return error.NoVideo;
+        const clip = f.avs_take_clip(result, env) orelse return error.NotAClip;
+        errdefer f.avs_release_clip(clip);
+        const vi_ptr = f.avs_get_video_info(clip) orelse return error.NoVideo;
         if (vi_ptr.width == 0) return error.NoVideo;
 
-        var self = Env{ .raw = env, .clip = clip, .vi = vi_ptr.* };
+        var self = Env{ .fns = f, .raw = env, .clip = clip, .vi = vi_ptr.* };
 
         const pt: u32 = @bitCast(self.vi.pixel_type);
         if ((pt & CS_YUY2) == CS_YUY2) {
@@ -188,12 +247,13 @@ pub const Env = struct {
     /// Invoke a conversion filter (e.g. "ConvertToYV16") on the held clip,
     /// replacing clip and vi.
     fn convert(self: *Env, name: [:0]const u8) !void {
+        const f = self.fns;
         var cval: AVS_Value = undefined;
-        avs_set_to_clip(&cval, self.clip);
-        defer avs_release_value(cval);
+        f.avs_set_to_clip(&cval, self.clip);
+        defer f.avs_release_value(cval);
 
-        const result = avs_invoke(self.raw, name.ptr, cval, null);
-        defer avs_release_value(result);
+        const result = f.avs_invoke(self.raw, name.ptr, cval, null);
+        defer f.avs_release_value(result);
 
         if (avsIsError(result)) {
             captureError(avsAsString(result));
@@ -201,65 +261,61 @@ pub const Env = struct {
         }
         if (!avsIsClip(result)) return error.NotAClip;
 
-        const new_clip = avs_take_clip(result, self.raw) orelse return error.NotAClip;
-        const vi_ptr = avs_get_video_info(new_clip) orelse {
-            avs_release_clip(new_clip);
+        const new_clip = f.avs_take_clip(result, self.raw) orelse return error.NotAClip;
+        const vi_ptr = f.avs_get_video_info(new_clip) orelse {
+            f.avs_release_clip(new_clip);
             return error.NoVideo;
         };
-        avs_release_clip(self.clip);
+        f.avs_release_clip(self.clip);
         self.clip = new_clip;
         self.vi = vi_ptr.*;
     }
 
     pub fn deinit(self: *Env) void {
-        avs_release_clip(self.clip);
-        avs_delete_script_environment(self.raw);
+        self.fns.avs_release_clip(self.clip);
+        self.fns.avs_delete_script_environment(self.raw);
     }
 
     pub fn getFrame(self: *const Env, n: c_int) ?*VideoFrame {
-        return avs_get_frame(self.clip, n);
+        return self.fns.avs_get_frame(self.clip, n);
     }
 
     /// Returns the pending error on the clip, if any. Must be checked after
     /// getFrame: AviSynth reports frame errors here, not by returning null.
     pub fn getClipError(self: *const Env) ?[*:0]const u8 {
-        return avs_clip_get_error(self.clip);
+        return self.fns.avs_clip_get_error(self.clip);
     }
 
     pub fn releaseFrame(self: *const Env, frame: ?*VideoFrame) void {
-        _ = self;
-        avs_release_video_frame(frame);
+        self.fns.avs_release_video_frame(frame);
     }
 
     pub fn getReadPtr(self: *const Env, frame: *const VideoFrame, plane: c_int) ?[*]const u8 {
-        _ = self;
-        return avs_get_read_ptr_p(frame, plane);
+        return self.fns.avs_get_read_ptr_p(frame, plane);
     }
 
     pub fn getPitch(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        _ = self;
-        return avs_get_pitch_p(frame, plane);
+        return self.fns.avs_get_pitch_p(frame, plane);
     }
 
     pub fn getRowSize(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        _ = self;
-        return avs_get_row_size_p(frame, plane);
+        return self.fns.avs_get_row_size_p(frame, plane);
     }
 
     pub fn getHeight(self: *const Env, frame: *const VideoFrame, plane: c_int) c_int {
-        _ = self;
-        return avs_get_height_p(frame, plane);
+        return self.fns.avs_get_height_p(frame, plane);
     }
 
     /// Maps the (post-normalization, therefore planar) clip format to
     /// VapourSynth terms using the AVS+ structural query exports.
     pub fn mapFormat(self: *const Env) error{Unsupported}!MappedFormat {
+        const f = self.fns;
         const vi = &self.vi;
         const pt: u32 = @bitCast(vi.pixel_type);
-        const bits = avs_bits_per_component(vi);
-        const is_float = avs_component_size(vi) == 4;
+        const bits = f.avs_bits_per_component(vi);
+        const is_float = f.avs_component_size(vi) == 4;
 
-        if (avs_is_planar_rgb(vi) != 0 or avs_is_planar_rgba(vi) != 0) return .{
+        if (f.avs_is_planar_rgb(vi) != 0 or f.avs_is_planar_rgba(vi) != 0) return .{
             .family = .RGB,
             .is_float = is_float,
             .bits = bits,
@@ -268,7 +324,7 @@ pub const Env = struct {
             .num_planes = 3, // alpha plane of RGBAP is dropped (not yet implemented)
             .planes = .{ Plane.R, Plane.G, Plane.B },
         };
-        if (avs_is_y(vi) != 0) return .{
+        if (f.avs_is_y(vi) != 0) return .{
             .family = .Gray,
             .is_float = is_float,
             .bits = bits,
@@ -277,12 +333,12 @@ pub const Env = struct {
             .num_planes = 1,
             .planes = .{ Plane.Y, 0, 0 },
         };
-        if ((pt & CS_PLANAR) != 0 and ((pt & CS_YUV) != 0 or avs_is_yuva(vi) != 0)) return .{
+        if ((pt & CS_PLANAR) != 0 and ((pt & CS_YUV) != 0 or f.avs_is_yuva(vi) != 0)) return .{
             .family = .YUV,
             .is_float = is_float,
             .bits = bits,
-            .sub_w = avs_get_plane_width_subsampling(vi, Plane.U),
-            .sub_h = avs_get_plane_height_subsampling(vi, Plane.U),
+            .sub_w = f.avs_get_plane_width_subsampling(vi, Plane.U),
+            .sub_h = f.avs_get_plane_height_subsampling(vi, Plane.U),
             .num_planes = 3, // alpha plane of YUVA is dropped (not yet implemented)
             .planes = .{ Plane.Y, Plane.U, Plane.V },
         };

@@ -15,8 +15,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
     mod.addImport("vapoursynth", vs_dep.module("vapoursynth"));
+    // libavisynth is dlopen'd at runtime (src/avs_capi.zig); never link it —
+    // the plugin must load into VapourSynth even when AviSynth+ is absent.
     mod.link_libc = true;
-    mod.linkSystemLibrary("avisynth", .{});
 
     const lib = b.addLibrary(.{
         .name = "vsavsreader",
