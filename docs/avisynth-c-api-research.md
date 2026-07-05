@@ -1,7 +1,8 @@
 # AviSynth+ API Research
 
-Headers: `vendor/avisynth/{avisynth.h, avs/{config,capi,types}.h}` (C++ plugin API).
-C ABI (`avisynth_c.h`) from upstream: `avs_core/include/avisynth_c.h`.
+Vendored at `vendor/avisynth/`:
+- `avisynth.h` + `avs/*.h` — C++ plugin API (V12)
+- `avisynth_c.h` — C ABI (V12, 2033 lines)
 Original C++ plugin: `chikuzen/VS_AvsReader` (AvsReader.{h,cpp}, plugin.cpp, myvshelper.h).
 
 ---
